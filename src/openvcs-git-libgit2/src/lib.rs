@@ -181,11 +181,11 @@ impl Vcs for GitLibGit2 {
         // Prefer reading from the repository config: remote.<name>.url
         let mut out: Vec<(String, String)> = Vec::new();
         let res = self.inner.with_repo(|repo| {
-            let cfg = repo.config().map_err(|e| Self::map_err(e))?;
+            let cfg = repo.config().map_err(Self::map_err)?;
             // Iterate over entries matching remote.*.url
             let mut iter = cfg
                 .entries(Some("remote.*.url"))
-                .map_err(|e| Self::map_err(e))?;
+                .map_err(Self::map_err)?;
             while let Some(Ok(entry)) = iter.next() {
                 if let (Some(name), Some(val)) = (entry.name(), entry.value()) {
                     // name like "remote.origin.url" → extract "origin"
@@ -456,10 +456,11 @@ impl Vcs for GitLibGit2 {
             .with_repo(|repo| {
                 use git2 as g;
                 // Do not delete current branch
-                if let Ok(head) = repo.head() {
-                    if head.is_branch() && head.shorthand() == Some(name) {
-                        return Err(g::Error::from_str("cannot delete current branch"));
-                    }
+                if let Ok(head) = repo.head()
+                    && head.is_branch()
+                    && head.shorthand() == Some(name)
+                {
+                    return Err(g::Error::from_str("cannot delete current branch"));
                 }
                 let mut br = repo.find_branch(name, g::BranchType::Local)?;
                 br.delete()?;

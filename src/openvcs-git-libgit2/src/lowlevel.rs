@@ -130,7 +130,7 @@ impl Git {
         log::trace!("acquiring repo lock");
         let repo = self.repo.lock().expect("libgit2 repo poisoned");
         log::trace!("repo lock acquired");
-        let result = f(&*repo);
+        let result = f(&repo);
         log::trace!("repo lock released");
         result
     }
@@ -261,9 +261,8 @@ impl Git {
             }
 
             // 2) Remote branch name like "origin/feature"
-            if name.contains('/') {
-                if repo.find_branch(name, g::BranchType::Remote).is_ok() {
-                    let local = name.split('/').last().unwrap_or(name);
+            if name.contains('/') && repo.find_branch(name, g::BranchType::Remote).is_ok() {
+                let local = name.split('/').next_back().unwrap_or(name);
                     if repo.find_branch(local, g::BranchType::Local).is_err() {
                         // Create local branch at the remote target
                         let rb = repo.find_branch(name, g::BranchType::Remote)?;
@@ -283,7 +282,6 @@ impl Git {
                         local, name
                     );
                     return Ok(());
-                }
             }
 
             // 3) Try default remote "origin/<name>"
@@ -660,12 +658,7 @@ impl Git {
                 )
             };
 
-            let target_ref = if let Some(name) = head_ref {
-                Some(name)
-            } else {
-                None
-            };
-            let oid = match &target_ref {
+            let oid = match head_ref.as_deref() {
                 Some(name) => repo.commit(Some(name), &sig, &sig, message, &tree, &parent_refs)?,
                 None => repo.commit(None, &sig, &sig, message, &tree, &[])?,
             };
@@ -806,15 +799,11 @@ impl Git {
                 // date filters (git time is seconds + offset)
                 let t = commit.time();
                 let secs = t.seconds();
-                if let Some(s) = since {
-                    if secs < s {
-                        continue;
-                    }
+                if let Some(s) = since && secs < s {
+                    continue;
                 }
-                if let Some(u) = until {
-                    if secs > u {
-                        continue;
-                    }
+                if let Some(u) = until && secs > u {
+                    continue;
                 }
 
                 // author filter (substring on "Name <email>")
@@ -829,10 +818,8 @@ impl Git {
                 }
 
                 // path filter (touches prefix)
-                if let Some(prefix) = path_filter {
-                    if !commit_touches_path(repo, oid, prefix)? {
-                        continue;
-                    }
+                if let Some(prefix) = path_filter && !commit_touches_path(repo, oid, prefix)? {
+                    continue;
                 }
 
                 // pagination (skip first N matches after filters)
@@ -882,25 +869,9 @@ impl Git {
             let statuses = repo.statuses(Some(&mut sopts))?;
 
             let mut files = Vec::<FileEntry>::with_capacity(statuses.len());
-            let mut summary = StatusSummary::default();
 
             for e in statuses.iter() {
                 let s = e.status();
-
-                if s.contains(g::Status::WT_NEW) {
-                    summary.untracked += 1;
-                }
-                if s.intersects(g::Status::WT_MODIFIED | g::Status::WT_TYPECHANGE) {
-                    summary.modified += 1;
-                }
-                if s.intersects(
-                    g::Status::INDEX_NEW | g::Status::INDEX_MODIFIED | g::Status::INDEX_TYPECHANGE,
-                ) {
-                    summary.staged += 1;
-                }
-                if s.contains(g::Status::CONFLICTED) {
-                    summary.conflicted += 1;
-                }
 
                 let code = if s.contains(g::Status::CONFLICTED) {
                     "U"
@@ -915,8 +886,6 @@ impl Git {
                     "?"
                 } else if s.contains(g::Status::INDEX_NEW) || s.contains(g::Status::WT_NEW) {
                     "A"
-                } else if s.intersects(g::Status::INDEX_MODIFIED | g::Status::WT_MODIFIED) {
-                    "M"
                 } else {
                     "M"
                 }
@@ -1220,8 +1189,7 @@ fn parse_iso_to_epoch_secs(s: &str) -> Option<i64> {
 
 /// Convert git2::Time to RFC3339 string, honoring the embedded offset minutes.
 fn git_time_to_rfc3339(t: g::Time) -> String {
-    let offset =
-        UtcOffset::from_whole_seconds((t.offset_minutes() * 60) as i32).unwrap_or(UtcOffset::UTC);
+    let offset = UtcOffset::from_whole_seconds(t.offset_minutes() * 60).unwrap_or(UtcOffset::UTC);
     OffsetDateTime::from_unix_timestamp(t.seconds())
         .unwrap_or(OffsetDateTime::UNIX_EPOCH)
         .to_offset(offset)
