@@ -101,7 +101,7 @@ pub static GIT_SYS_DESC: BackendDescriptor = BackendDescriptor {
     clone_repo: clone_factory,
 };
 
-const GIT_COMMAND_NAME: &'static str = "git";
+const GIT_COMMAND_NAME: &str = "git";
 
 /* ============================== implementation ============================== */
 
@@ -368,7 +368,7 @@ impl GitSystem {
                 let mut tmp = [0u8; 8192];
                 let mut pending: Vec<u8> = Vec::new();
 
-                let mut flush = |bytes: &[u8]| {
+                let flush = |bytes: &[u8]| {
                     let text = String::from_utf8_lossy(bytes).trim().to_string();
                     if text.is_empty() {
                         return;
@@ -495,7 +495,7 @@ impl GitSystem {
             return Ok(false);
         }
 
-        let is_binary = work_bytes.iter().any(|&b| b == 0);
+        let is_binary = work_bytes.contains(&0);
         if is_binary {
             return Ok(false);
         }
@@ -602,13 +602,12 @@ impl Vcs for GitSystem {
                     kind: BranchKind::Local,
                     current,
                 });
-            } else if full.starts_with("refs/remotes/") {
+            } else if let Some(after) = full.strip_prefix("refs/remotes/") {
                 // refs/remotes/<remote>/<branch>
                 // filter origin/HEAD
                 if full.ends_with("/HEAD") {
                     continue;
                 }
-                let after = &full["refs/remotes/".len()..];
                 let remote = after.split('/').next().unwrap_or("").to_string();
 
                 items.push(BranchItem {
@@ -937,14 +936,15 @@ impl Vcs for GitSystem {
                         continue;
                     }
                     let xy = parts.get(1).copied().unwrap_or("");
-                    let x = xy.chars().nth(0).unwrap_or(' ');
-                    let y = xy.chars().nth(1).unwrap_or(' ');
+                    let mut xy_chars = xy.chars();
+                    let x = xy_chars.next().unwrap_or(' ');
+                    let y = xy_chars.next().unwrap_or(' ');
                     let staged = x != ' ';
 
                     if line.starts_with("2 ") {
                         // Rename/copy record includes two paths at the end.
                         // Determine which one is the "new" path by checking for existence when possible.
-                        if parts.len() >= 2 + 1 + 1 + 1 {
+                        if parts.len() > 2 + 1 + 1 {
                             let sub = parts.get(2).copied().unwrap_or("");
                             let status = if sub.to_ascii_uppercase().starts_with('C') {
                                 "C"
@@ -952,34 +952,32 @@ impl Vcs for GitSystem {
                                 "R"
                             }
                             .to_string();
-                            if parts.len() >= 2 {
-                                let a = parts
-                                    .get(parts.len().saturating_sub(2))
-                                    .copied()
-                                    .unwrap_or("");
-                                let b = parts
-                                    .get(parts.len().saturating_sub(1))
-                                    .copied()
-                                    .unwrap_or("");
-                                let a_exists = workdir.join(a).exists();
-                                let b_exists = workdir.join(b).exists();
-                                let (new_path, old_path) = if a_exists && !b_exists {
-                                    (a.to_string(), Some(b.to_string()))
-                                } else if b_exists && !a_exists {
-                                    (b.to_string(), Some(a.to_string()))
-                                } else {
-                                    // Fallback to porcelain v2 convention: last token is the source/orig path.
-                                    (a.to_string(), Some(b.to_string()))
-                                };
-                                files.push(FileEntry {
-                                    path: new_path,
-                                    old_path,
-                                    status,
-                                    staged,
-                                    resolved_conflict: false,
-                                    hunks: Vec::new(),
-                                });
-                            }
+                            let a = parts
+                                .get(parts.len().saturating_sub(2))
+                                .copied()
+                                .unwrap_or("");
+                            let b = parts
+                                .get(parts.len().saturating_sub(1))
+                                .copied()
+                                .unwrap_or("");
+                            let a_exists = workdir.join(a).exists();
+                            let b_exists = workdir.join(b).exists();
+                            let (new_path, old_path) = if a_exists && !b_exists {
+                                (a.to_string(), Some(b.to_string()))
+                            } else if b_exists && !a_exists {
+                                (b.to_string(), Some(a.to_string()))
+                            } else {
+                                // Fallback to porcelain v2 convention: last token is the source/orig path.
+                                (a.to_string(), Some(b.to_string()))
+                            };
+                            files.push(FileEntry {
+                                path: new_path,
+                                old_path,
+                                status,
+                                staged,
+                                resolved_conflict: false,
+                                hunks: Vec::new(),
+                            });
                         }
                     } else {
                         // Ordinary changed entry: choose a stable UI status bucket.
@@ -993,8 +991,6 @@ impl Vcs for GitSystem {
                             "C"
                         } else if x == 'T' || y == 'T' {
                             "T"
-                        } else if x == 'M' || y == 'M' {
-                            "M"
                         } else {
                             "M"
                         }
@@ -1087,8 +1083,8 @@ impl Vcs for GitSystem {
                 ],
             ) {
                 let up = up_short.trim();
-                if !up.is_empty() {
-                    if let Ok(ab) = Self::run_git_capture(
+                if !up.is_empty()
+                    && let Ok(ab) = Self::run_git_capture(
                         Some(&self.workdir),
                         [
                             "rev-list",
@@ -1096,19 +1092,19 @@ impl Vcs for GitSystem {
                             "--count",
                             &format!("{up}...HEAD"),
                         ],
-                    ) {
-                        let mut parts = ab.split_whitespace();
-                        if let (Some(b), Some(a)) = (parts.next(), parts.next()) {
-                            behind = b.parse().unwrap_or(0);
-                            ahead = a.parse().unwrap_or(0);
-                        }
+                    )
+                {
+                    let mut parts = ab.split_whitespace();
+                    if let (Some(b), Some(a)) = (parts.next(), parts.next()) {
+                        behind = b.parse().unwrap_or(0);
+                        ahead = a.parse().unwrap_or(0);
                     }
                 }
             }
             // Final fallback: origin/<branch>
             if ahead == 0 && behind == 0 {
                 let remote_short = format!("origin/{cur}");
-                if Self::run_git_capture(
+                let remote_exists = Self::run_git_capture(
                     Some(&self.workdir),
                     ["rev-parse", "--verify", "--quiet", &remote_short],
                 )
@@ -1122,9 +1118,10 @@ impl Vcs for GitSystem {
                             &format!("refs/remotes/{remote_short}"),
                         ],
                     )
-                    .is_ok()
-                {
-                    if let Ok(ab) = Self::run_git_capture(
+                    .is_ok();
+
+                if remote_exists
+                    && let Ok(ab) = Self::run_git_capture(
                         Some(&self.workdir),
                         [
                             "rev-list",
@@ -1132,12 +1129,12 @@ impl Vcs for GitSystem {
                             "--count",
                             &format!("{remote_short}...HEAD"),
                         ],
-                    ) {
-                        let mut parts = ab.split_whitespace();
-                        if let (Some(b), Some(a)) = (parts.next(), parts.next()) {
-                            behind = b.parse().unwrap_or(0);
-                            ahead = a.parse().unwrap_or(0);
-                        }
+                    )
+                {
+                    let mut parts = ab.split_whitespace();
+                    if let (Some(b), Some(a)) = (parts.next(), parts.next()) {
+                        behind = b.parse().unwrap_or(0);
+                        ahead = a.parse().unwrap_or(0);
                     }
                 }
             }
@@ -1334,7 +1331,7 @@ impl Vcs for GitSystem {
             lfs_ptr: &mut bool,
         ) -> Option<String> {
             let bytes = data?;
-            if bytes.iter().any(|&b| b == 0) {
+            if bytes.contains(&0) {
                 *binary = true;
                 return None;
             }
@@ -1399,10 +1396,10 @@ impl Vcs for GitSystem {
         } else {
             self.workdir.join(path)
         };
-        if let Some(parent) = abs.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).map_err(VcsError::Io)?;
-            }
+        if let Some(parent) = abs.parent()
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent).map_err(VcsError::Io)?;
         }
         fs::write(&abs, content).map_err(VcsError::Io)?;
         let rel = Self::path_str(path)?;
@@ -1418,7 +1415,7 @@ impl Vcs for GitSystem {
         // - `--3way`: attempt a 3-way merge if the patch does not apply cleanly
         // - `-p1`: strip leading a/ and b/ introduced by unified diffs
         // - `--whitespace=nowarn`: do not reject because of whitespace-only issues
-        if let Err(_) = Self::run_git_with_input(
+        if Self::run_git_with_input(
             Some(&self.workdir),
             [
                 "apply",
@@ -1430,7 +1427,9 @@ impl Vcs for GitSystem {
                 "-",
             ],
             patch,
-        ) {
+        )
+        .is_err()
+        {
             // Some patches may not include a/ b/ prefixes; retry without stripping
             Self::run_git_with_input(
                 Some(&self.workdir),
@@ -1464,7 +1463,7 @@ impl Vcs for GitSystem {
         for p in paths {
             args.push(Self::path_str(p)?.to_string());
         }
-        if let Err(_) = Self::run_git(Some(&self.workdir), args.clone()) {
+        if Self::run_git(Some(&self.workdir), args.clone()).is_err() {
             for p in paths {
                 let single = vec![
                     "restore".to_string(),
@@ -1544,15 +1543,13 @@ impl Vcs for GitSystem {
     fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
         log::info!("git-system: delete_branch '{}' force={}", name, force);
         // Guard: do not delete current branch
-        if let Ok(cur) = self.current_branch() {
-            if let Some(c) = cur {
-                if c == name {
-                    return Err(VcsError::Backend {
-                        backend: GIT_SYSTEM_ID,
-                        msg: "cannot delete current branch".into(),
-                    });
-                }
-            }
+        if let Ok(Some(cur)) = self.current_branch()
+            && cur == name
+        {
+            return Err(VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: "cannot delete current branch".into(),
+            });
         }
         if force {
             Self::run_git(Some(&self.workdir), ["branch", "-D", name])
