@@ -1,0 +1,107 @@
+name: Pre-release
+
+"on":
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (default: openvcs-git-v<Cargo.toml version>)"
+        required: false
+        type: string
+  push:
+    branches: [stable, Stable]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build bundle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build plugin
+        run: cargo build --release -p openvcs-git-plugin
+
+      - name: Assemble bundle (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCH="$(uname -m)"
+          PLUGIN_ID="openvcs.git"
+          OUT="dist/${PLUGIN_ID}-${{ runner.os }}-${ARCH}"
+          mkdir -p "${OUT}/bin"
+          cp openvcs.plugin.json "${OUT}/openvcs.plugin.json"
+          cp target/release/openvcs-git-plugin "${OUT}/bin/openvcs-git-plugin"
+          tar -C dist -czf "${PLUGIN_ID}-${{ runner.os }}-${ARCH}.tar.gz" "$(basename "${OUT}")"
+
+      - name: Assemble bundle (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pluginId = "openvcs.git"
+          $out = "dist/$pluginId-Windows-x86_64"
+          New-Item -ItemType Directory -Force -Path "$out/bin" | Out-Null
+          Copy-Item openvcs.plugin.json "$out/openvcs.plugin.json" -Force
+          Copy-Item target\release\openvcs-git-plugin.exe "$out/bin/openvcs-git-plugin.exe" -Force
+          Compress-Archive -Path "$out/*" -DestinationPath "$pluginId-Windows-x86_64.zip" -Force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openvcs-git-${{ runner.os }}
+          path: |
+            openvcs.git-*.tar.gz
+            openvcs.git-*.zip
+
+  release:
+    name: Create GitHub Pre-release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine tag
+        id: tag
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_TAG}" ]; then
+            echo "tag=${INPUT_TAG}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TAG="$(python - <<'PY'
+          import tomllib
+          with open("src/openvcs-git-plugin/Cargo.toml", "rb") as f:
+              data = tomllib.load(f)
+          ver = data["package"]["version"]
+          print(f"openvcs-git-v{ver}")
+          PY
+          )"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            artifacts/**/*

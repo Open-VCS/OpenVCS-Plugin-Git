@@ -445,6 +445,7 @@ dependencies = [
  "linkme",
  "log",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 
@@ -479,16 +480,6 @@ dependencies = [
  "openvcs-core",
  "openvcs-git",
  "openvcs-git-libgit2",
- "openvcs-plugin-protocol",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "openvcs-plugin-protocol"
-version = "0.1.0"
-dependencies = [
- "openvcs-core",
  "serde",
  "serde_json",
 ]
