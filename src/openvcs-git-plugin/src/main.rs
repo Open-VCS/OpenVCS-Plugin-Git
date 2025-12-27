@@ -1,6 +1,6 @@
 use openvcs_core::models::{ConflictSide, FetchOptions, LogQuery, VcsEvent};
 use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest, RpcResponse};
-use openvcs_core::{OnEvent, Result as VcsResult, Vcs, VcsError};
+use openvcs_core::{OnEvent, Vcs, VcsError, models::BranchKind};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use std::io::{self, BufRead, BufReader, LineWriter, Write};
@@ -96,7 +96,7 @@ fn main() {
 
     let mut repo: Option<Box<dyn Vcs>> = None;
 
-    for line in stdin.lines().flatten() {
+    for line in stdin.lines().map_while(Result::ok) {
         if line.trim().is_empty() {
             continue;
         }
@@ -214,7 +214,14 @@ fn main() {
                     }
                     "branches" => Ok(json!(repo.branches().map_err(|e| e.to_string())?)),
                     "local_branches" => {
-                        Ok(json!(repo.local_branches().map_err(|e| e.to_string())?))
+                        let locals: Vec<String> = repo
+                            .branches()
+                            .map_err(|e| e.to_string())?
+                            .into_iter()
+                            .filter(|b| b.kind == BranchKind::Local)
+                            .map(|b| b.name)
+                            .collect();
+                        Ok(json!(locals))
                     }
                     "create_branch" => {
                         #[derive(serde::Deserialize)]
