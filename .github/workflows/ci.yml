@@ -1,32 +1,63 @@
-name: CI
+name: Dev CI (fast)
 
-"on":
-  workflow_dispatch: {}
+on:
   push:
-    branches: [dev, Dev]
+    branches: [Dev]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'openvcs.plugin.json'
+      - '.github/workflows/ci.yml'
   pull_request:
-    branches: [dev, Dev]
+    branches: [Dev]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'openvcs.plugin.json'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: dev-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
+      SCCACHE_CACHE_SIZE: '2G'
     steps:
       - name: Checkout OpenVCS-Plugin-Git
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           path: OpenVCS-Plugin-Git
+          fetch-depth: 0
 
       - name: Checkout OpenVCS-Core
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: ${{ github.repository_owner }}/OpenVCS-Core
           path: OpenVCS-Core
+          fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
         with:
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: OpenVCS-Plugin-Git
 
