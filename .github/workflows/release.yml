@@ -145,7 +145,7 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
-          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+          prerelease: true
           generate_release_notes: true
           files: |
             artifacts/**/*
