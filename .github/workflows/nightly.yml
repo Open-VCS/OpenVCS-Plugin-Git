@@ -212,7 +212,7 @@ jobs:
             }
 
       - name: Create Nightly prerelease
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           tag_name: openvcs-git-nightly
           name: "OpenVCS-Plugin-Git Nightly ${{ steps.meta.outputs.date }} (${{ env.TARGET_REF }}@${{ steps.meta.outputs.short_sha }})"
