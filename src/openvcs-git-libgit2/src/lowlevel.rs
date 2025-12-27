@@ -263,25 +263,25 @@ impl Git {
             // 2) Remote branch name like "origin/feature"
             if name.contains('/') && repo.find_branch(name, g::BranchType::Remote).is_ok() {
                 let local = name.split('/').next_back().unwrap_or(name);
-                    if repo.find_branch(local, g::BranchType::Local).is_err() {
-                        // Create local branch at the remote target
-                        let rb = repo.find_branch(name, g::BranchType::Remote)?;
-                        let target = rb
-                            .get()
-                            .target()
-                            .ok_or_else(|| g::Error::from_str("remote branch has no target"))?;
-                        let commit = repo.find_commit(target)?;
-                        repo.branch(local, &commit, false)?;
-                        // Set upstream to remote
-                        let mut lb = repo.find_branch(local, g::BranchType::Local)?;
-                        lb.set_upstream(Some(name))?;
-                    }
-                    checkout_ref(repo, &format!("refs/heads/{}", local))?;
-                    info!(
-                        "created and checked out tracking branch '{}' for remote '{}'",
-                        local, name
-                    );
-                    return Ok(());
+                if repo.find_branch(local, g::BranchType::Local).is_err() {
+                    // Create local branch at the remote target
+                    let rb = repo.find_branch(name, g::BranchType::Remote)?;
+                    let target = rb
+                        .get()
+                        .target()
+                        .ok_or_else(|| g::Error::from_str("remote branch has no target"))?;
+                    let commit = repo.find_commit(target)?;
+                    repo.branch(local, &commit, false)?;
+                    // Set upstream to remote
+                    let mut lb = repo.find_branch(local, g::BranchType::Local)?;
+                    lb.set_upstream(Some(name))?;
+                }
+                checkout_ref(repo, &format!("refs/heads/{}", local))?;
+                info!(
+                    "created and checked out tracking branch '{}' for remote '{}'",
+                    local, name
+                );
+                return Ok(());
             }
 
             // 3) Try default remote "origin/<name>"
@@ -799,10 +799,14 @@ impl Git {
                 // date filters (git time is seconds + offset)
                 let t = commit.time();
                 let secs = t.seconds();
-                if let Some(s) = since && secs < s {
+                if let Some(s) = since
+                    && secs < s
+                {
                     continue;
                 }
-                if let Some(u) = until && secs > u {
+                if let Some(u) = until
+                    && secs > u
+                {
                     continue;
                 }
 
@@ -818,7 +822,9 @@ impl Git {
                 }
 
                 // path filter (touches prefix)
-                if let Some(prefix) = path_filter && !commit_touches_path(repo, oid, prefix)? {
+                if let Some(prefix) = path_filter
+                    && !commit_touches_path(repo, oid, prefix)?
+                {
                     continue;
                 }
 

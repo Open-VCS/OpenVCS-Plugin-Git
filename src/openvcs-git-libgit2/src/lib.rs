@@ -183,9 +183,7 @@ impl Vcs for GitLibGit2 {
         let res = self.inner.with_repo(|repo| {
             let cfg = repo.config().map_err(Self::map_err)?;
             // Iterate over entries matching remote.*.url
-            let mut iter = cfg
-                .entries(Some("remote.*.url"))
-                .map_err(Self::map_err)?;
+            let mut iter = cfg.entries(Some("remote.*.url")).map_err(Self::map_err)?;
             while let Some(Ok(entry)) = iter.next() {
                 if let (Some(name), Some(val)) = (entry.name(), entry.value()) {
                     // name like "remote.origin.url" → extract "origin"
