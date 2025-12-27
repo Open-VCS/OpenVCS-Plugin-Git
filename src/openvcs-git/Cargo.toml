@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-openvcs-core = { path = "../../../../../crates/openvcs-core" }
+openvcs-core = { path = "../../../OpenVCS-Core", features = ["vcs", "backend-registry"] }
 linkme = "0.3"
 log = "0.4" 

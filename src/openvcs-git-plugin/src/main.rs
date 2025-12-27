@@ -1,6 +1,6 @@
 use openvcs_core::models::{ConflictSide, FetchOptions, LogQuery, VcsEvent};
 use openvcs_core::{OnEvent, Result as VcsResult, Vcs, VcsError};
-use openvcs_plugin_protocol::{PluginMessage, RpcRequest, RpcResponse};
+use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest, RpcResponse};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use std::io::{self, BufRead, BufReader, LineWriter, Write};
