@@ -1,0 +1,12 @@
+{
+  "id": "openvcs.git",
+  "name": "Git Backends",
+  "category": "backend",
+  "description": "Provides Git backends (system git and libgit2) as an OpenVCS plugin.",
+  "default_enabled": true,
+  "backend": {
+    "exec": "openvcs-git-plugin",
+    "provides": ["git-system", "git-libgit2"]
+  }
+}
+

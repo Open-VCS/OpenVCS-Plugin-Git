@@ -1,0 +1,19 @@
+[package]
+name = "openvcs-git-plugin"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["system-git", "libgit2"]
+system-git = ["dep:openvcs-git"]
+libgit2 = ["dep:openvcs-git-libgit2"]
+
+[dependencies]
+openvcs-git = { path = "../openvcs-git", optional = true }
+openvcs-git-libgit2 = { path = "../openvcs-git-libgit2", optional = true }
+openvcs-core = { path = "../../../../../crates/openvcs-core" }
+openvcs-plugin-protocol = { path = "../../../../../crates/openvcs-plugin-protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
