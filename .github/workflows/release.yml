@@ -3,7 +3,7 @@ run-name: "OpenVCS-Plugin-Git • Release • Run #${{ github.run_number }}"
 
 on:
   push:
-    branches: [stable]
+    branches: [Stable]
   workflow_dispatch:
     inputs:
       tag:
