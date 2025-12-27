@@ -1,0 +1,5 @@
+name: OpenVCS CodeQL config
+query-filters:
+  - exclude:
+      id: js/github-actions/unpinned-action
+
