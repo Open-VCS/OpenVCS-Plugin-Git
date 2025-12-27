@@ -11,19 +11,33 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout OpenVCS-Plugin-Git
+        uses: actions/checkout@v4
+        with:
+          path: OpenVCS-Plugin-Git
+
+      - name: Checkout OpenVCS-Core
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/OpenVCS-Core
+          path: OpenVCS-Core
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: OpenVCS-Plugin-Git
 
       - name: Format
+        working-directory: OpenVCS-Plugin-Git
         run: cargo fmt --all --check
 
       - name: Clippy
+        working-directory: OpenVCS-Plugin-Git
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
+        working-directory: OpenVCS-Plugin-Git
         run: cargo test --workspace
