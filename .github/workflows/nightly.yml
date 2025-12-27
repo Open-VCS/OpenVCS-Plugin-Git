@@ -82,10 +82,19 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-latest, windows-latest]
     steps:
-      - name: Checkout target ref
+      - name: Checkout OpenVCS-Plugin-Git (target ref)
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           ref: ${{ env.TARGET_REF }}
+          path: OpenVCS-Plugin-Git
+          fetch-depth: 0
+
+      - name: Checkout OpenVCS-Core (target ref)
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: ${{ github.repository_owner }}/OpenVCS-Core
+          ref: ${{ env.TARGET_REF }}
+          path: OpenVCS-Core
           fetch-depth: 0
 
       - name: Install Rust (stable)
@@ -96,13 +105,17 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          workspaces: OpenVCS-Plugin-Git
 
       - name: Build plugin
+        working-directory: OpenVCS-Plugin-Git
         run: cargo build --release -p openvcs-git-plugin
 
       - name: Assemble bundle (unix)
         if: runner.os != 'Windows'
         shell: bash
+        working-directory: OpenVCS-Plugin-Git
         run: |
           set -euo pipefail
           ARCH="$(uname -m)"
@@ -116,6 +129,7 @@ jobs:
       - name: Assemble bundle (windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        working-directory: OpenVCS-Plugin-Git
         run: |
           $pluginId = "openvcs.git"
           $out = "dist/$pluginId-Windows-x86_64"
@@ -129,8 +143,8 @@ jobs:
         with:
           name: openvcs-git-nightly-${{ runner.os }}
           path: |
-            openvcs.git-*.tar.gz
-            openvcs.git-*.zip
+            OpenVCS-Plugin-Git/openvcs.git-*.tar.gz
+            OpenVCS-Plugin-Git/openvcs.git-*.zip
 
   release:
     name: Publish rolling nightly prerelease
