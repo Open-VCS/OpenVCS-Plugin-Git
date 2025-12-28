@@ -7,11 +7,8 @@ use openvcs_core::models::{
 };
 use openvcs_core::*;
 use std::{
-    fs,
-    io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 /* ============================ registry wiring ============================ */
 
@@ -625,7 +622,7 @@ impl GitSystem {
             return Ok(false);
         }
 
-        let abs = self.workdir.join(rel);
+        let _abs = self.workdir.join(rel);
         #[cfg(target_arch = "wasm32")]
         let work_bytes = {
             let bytes = crate::host_workspace::read(rel).map_err(|msg| VcsError::Backend {
@@ -1572,7 +1569,7 @@ impl Vcs for GitSystem {
             path.display(),
             content.len()
         );
-        let abs = if path.is_absolute() {
+        let _abs = if path.is_absolute() {
             path.to_path_buf()
         } else {
             self.workdir.join(path)
