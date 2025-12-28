@@ -1,5 +1,5 @@
 use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest, RpcResponse};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, LineWriter, Write};
 use std::sync::{Arc, Mutex};
@@ -197,4 +197,3 @@ fn main() {
         }
     }
 }
-
