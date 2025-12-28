@@ -1,14 +1,11 @@
 #[cfg(feature = "system-git")]
-#[path = "openvcs-git/src/lib.rs"]
-mod git_system;
+mod system_git;
 
 #[cfg(feature = "system-git")]
-pub use git_system::GitSystem;
+pub use system_git::GitSystem;
 
 #[cfg(feature = "libgit2")]
-#[path = "openvcs-git-libgit2/src/lib.rs"]
-mod git_libgit2;
+mod libgit2;
 
 #[cfg(feature = "libgit2")]
-pub use git_libgit2::GitLibGit2;
-
+pub use libgit2::GitLibGit2;

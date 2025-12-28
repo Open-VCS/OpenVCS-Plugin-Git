@@ -22,8 +22,8 @@ time = { version = "0.3", features = ["parsing", "formatting"], optional = true 
 
 [[bin]]
 name = "openvcs-git-plugin"
-path = "src/openvcs-git-plugin/src/main.rs"
+path = "src/bin/openvcs-git-plugin.rs"
 
 [[bin]]
 name = "openvcs-git-functions"
-path = "src/openvcs-git-functions/src/main.rs"
+path = "src/bin/openvcs-git-functions.rs"
