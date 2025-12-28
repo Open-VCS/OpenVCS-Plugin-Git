@@ -1,10 +1,10 @@
 use openvcs_core::models::{ConflictSide, FetchOptions, LogQuery, VcsEvent};
 use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest};
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-use openvcs_core::plugin_protocol::RpcResponse;
 use openvcs_core::plugin_stdio::{
     PluginError, parse_json_params, read_message, respond_shared, write_message_shared,
 };
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
+use openvcs_core::plugin_stdio::{AsyncHostCallState, host_call_blocking};
 use openvcs_core::{OnEvent, Vcs, VcsError, models::BranchKind};
 #[cfg(feature = "libgit2")]
 use openvcs_plugin_git::GitLibGit2;
@@ -15,8 +15,6 @@ use openvcs_plugin_git::host_exec::{HostExecOutput, set_host_exec};
 #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 use openvcs_plugin_git::host_workspace;
 use serde_json::json;
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::{self, BufReader, LineWriter};
 use std::path::{Path, PathBuf};
@@ -26,12 +24,6 @@ use std::time::Duration;
 
 #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);
-
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-#[derive(Debug)]
-struct PendingHostCalls {
-    next_id: u64,
-}
 
 
 
@@ -89,77 +81,6 @@ fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
         })
 }
 
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-fn host_call(
-    out: &Arc<Mutex<LineWriter<io::Stdout>>>,
-    stdin: &Arc<Mutex<BufReader<io::Stdin>>>,
-    queue: &Arc<Mutex<VecDeque<RpcRequest>>>,
-    pending: &Arc<Mutex<PendingHostCalls>>,
-    method: &str,
-    params: serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    let id = {
-        let mut lock = pending.lock().map_err(|_| "pending lock poisoned")?;
-        let id = lock.next_id;
-        lock.next_id = lock.next_id.saturating_add(1);
-        id
-    };
-
-    write_message_shared(
-        out,
-        &PluginMessage::Request(RpcRequest {
-            id,
-            method: method.to_string(),
-            params,
-        }),
-    );
-
-    let deadline = std::time::Instant::now() + HOST_CALL_TIMEOUT;
-    let mut stash: HashMap<u64, RpcResponse> = HashMap::new();
-
-    loop {
-        if std::time::Instant::now() > deadline {
-            return Err("host call timed out".to_string());
-        }
-
-        if let Some(resp) = stash.remove(&id) {
-            return if resp.ok {
-                Ok(resp.result)
-            } else {
-                let code = resp.error_code.unwrap_or_else(|| "host.error".into());
-                let msg = resp.error.unwrap_or_else(|| "error".into());
-                Err(format!("{code}: {msg}"))
-            };
-        }
-
-        let msg = {
-            let mut lock = stdin.lock().map_err(|_| "stdin lock poisoned")?;
-            read_message(&mut *lock).ok_or_else(|| "host closed stdin".to_string())?
-        };
-
-        match msg {
-            PluginMessage::Response(resp) => {
-                if resp.id == id {
-                    return if resp.ok {
-                        Ok(resp.result)
-                    } else {
-                        let code = resp.error_code.unwrap_or_else(|| "host.error".into());
-                        let msg = resp.error.unwrap_or_else(|| "error".into());
-                        Err(format!("{code}: {msg}"))
-                    };
-                }
-                stash.insert(resp.id, resp);
-            }
-            PluginMessage::Request(req) => {
-                if let Ok(mut q) = queue.lock() {
-                    q.push_back(req);
-                }
-            }
-            PluginMessage::Event { .. } => {}
-        }
-    }
-}
-
 fn main() {
     env_logger::Builder::from_default_env()
         .format_timestamp(None)
@@ -180,7 +101,7 @@ fn main() {
     let mut repo: Option<Box<dyn Vcs>> = None;
 
     #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-    let pending: Arc<Mutex<PendingHostCalls>> = Arc::new(Mutex::new(PendingHostCalls {
+    let pending: Arc<Mutex<AsyncHostCallState>> = Arc::new(Mutex::new(AsyncHostCallState {
         // Reserve low ids for host->plugin calls.
         next_id: 1u64 << 63,
     }));
@@ -196,20 +117,25 @@ fn main() {
                 .iter()
                 .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                 .collect::<serde_json::Map<_, _>>();
-            let res = host_call(
+            let res = host_call_blocking(
                 &out_exec,
                 &stdin_exec,
                 &queue_exec,
                 &pending_exec,
                 "process.exec",
                 serde_json::json!({
-                    "program": "git",
-                    "cwd": cwd.and_then(|p| p.to_str()).unwrap_or(""),
-                    "args": args,
-                    "env": env_obj,
-                    "stdin": stdin_text.unwrap_or(""),
+                  "program": "git",
+                  "cwd": cwd.and_then(|p| p.to_str()).unwrap_or(""),
+                  "args": args,
+                  "env": env_obj,
+                  "stdin": stdin_text.unwrap_or(""),
                 }),
-            )?;
+                HOST_CALL_TIMEOUT,
+            )
+            .map_err(|e| {
+                let code = e.code.unwrap_or_else(|| "host.error".into());
+                format!("{code}: {}", e.message)
+            })?;
             Ok(HostExecOutput {
                 success: res.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
                 status: res.get("status").and_then(|v| v.as_i64()).unwrap_or(-1) as i32,
@@ -223,14 +149,19 @@ fn main() {
         let queue_read = Arc::clone(&queue);
         let pending_read = Arc::clone(&pending);
         host_workspace::set_read(Arc::new(move |path: &str| {
-            let res = host_call(
+            let res = host_call_blocking(
                 &out_read,
                 &stdin_read,
                 &queue_read,
                 &pending_read,
                 "workspace.readFile",
                 serde_json::json!({ "path": path }),
-            )?;
+                HOST_CALL_TIMEOUT,
+            )
+            .map_err(|e| {
+                let code = e.code.unwrap_or_else(|| "host.error".into());
+                format!("{code}: {}", e.message)
+            })?;
             Ok(res.as_str().unwrap_or("").as_bytes().to_vec())
         }));
 
@@ -240,14 +171,19 @@ fn main() {
         let pending_write = Arc::clone(&pending);
         host_workspace::set_write(Arc::new(move |path: &str, bytes: &[u8]| {
             let content = String::from_utf8_lossy(bytes).to_string();
-            let _ = host_call(
+            let _ = host_call_blocking(
                 &out_write,
                 &stdin_write,
                 &queue_write,
                 &pending_write,
                 "workspace.writeFile",
                 serde_json::json!({ "path": path, "content": content }),
-            )?;
+                HOST_CALL_TIMEOUT,
+            )
+            .map_err(|e| {
+                let code = e.code.unwrap_or_else(|| "host.error".into());
+                format!("{code}: {}", e.message)
+            })?;
             Ok(())
         }));
     }
