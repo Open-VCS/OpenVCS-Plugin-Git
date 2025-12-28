@@ -13,6 +13,28 @@ enum BackendKind {
     GitLibgit2,
 }
 
+fn backend_caps(kind: BackendKind) -> openvcs_core::models::Capabilities {
+    use openvcs_core::models::Capabilities;
+    match kind {
+        BackendKind::GitSystem => Capabilities {
+            commits: true,
+            branches: true,
+            tags: true,
+            staging: true,
+            push_pull: true,
+            fast_forward: true,
+        },
+        BackendKind::GitLibgit2 => Capabilities {
+            commits: true,
+            branches: true,
+            tags: true,
+            staging: true,
+            push_pull: true,
+            fast_forward: true,
+        },
+    }
+}
+
 fn parse_backend_kind() -> Result<BackendKind, String> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -62,6 +84,8 @@ fn respond_ok(out: &Arc<Mutex<LineWriter<io::Stdout>>>, id: u64, result: serde_j
             ok: true,
             result,
             error: None,
+            error_code: None,
+            error_data: None,
         }),
     );
 }
@@ -74,6 +98,8 @@ fn respond_err(out: &Arc<Mutex<LineWriter<io::Stdout>>>, id: u64, msg: String) {
             ok: false,
             result: serde_json::Value::Null,
             error: Some(msg),
+            error_code: None,
+            error_data: None,
         }),
     );
 }
@@ -118,6 +144,7 @@ fn main() {
         let params = req.params;
 
         let res: Result<serde_json::Value, String> = (|| match method {
+            "caps" => Ok(json!(backend_caps(backend_kind))),
             "open" => {
                 #[derive(serde::Deserialize)]
                 struct P {

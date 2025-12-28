@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "src/openvcs-git-plugin",
+  "src/openvcs-git-functions",
   "src/openvcs-git",
   "src/openvcs-git-libgit2",
 ]

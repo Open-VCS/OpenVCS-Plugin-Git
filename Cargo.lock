@@ -459,6 +459,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "openvcs-git-functions"
+version = "0.1.0"
+dependencies = [
+ "openvcs-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "openvcs-git-libgit2"
 version = "0.1.0"
 dependencies = [
