@@ -82,10 +82,6 @@ fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
 }
 
 fn main() {
-    env_logger::Builder::from_default_env()
-        .format_timestamp(None)
-        .init();
-
     let backend_kind = match parse_backend_kind() {
         Ok(k) => k,
         Err(e) => {
