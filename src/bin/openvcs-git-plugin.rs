@@ -5,11 +5,42 @@ use openvcs_core::{OnEvent, Vcs, VcsError, models::BranchKind};
 use openvcs_plugin_git::GitLibGit2;
 #[cfg(feature = "system-git")]
 use openvcs_plugin_git::GitSystem;
+#[cfg(feature = "system-git")]
+use openvcs_plugin_git::host_exec::{HostExecOutput, set_host_exec};
 use serde::de::DeserializeOwned;
 use serde_json::json;
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, LineWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[cfg(feature = "system-git")]
+#[derive(Debug)]
+struct PendingHostCalls {
+    next_id: u64,
+}
+
+fn read_message<R: BufRead>(stdin: &mut R) -> Option<PluginMessage> {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = stdin.read_line(&mut line).ok()?;
+        if n == 0 {
+            return None;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(msg) = serde_json::from_str::<PluginMessage>(trimmed) {
+            return Some(msg);
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum BackendKind {
@@ -108,6 +139,77 @@ fn respond_err(out: &Arc<Mutex<LineWriter<io::Stdout>>>, id: u64, msg: String) {
     );
 }
 
+#[cfg(feature = "system-git")]
+fn host_call(
+    out: &Arc<Mutex<LineWriter<io::Stdout>>>,
+    stdin: &Arc<Mutex<BufReader<io::Stdin>>>,
+    queue: &Arc<Mutex<VecDeque<RpcRequest>>>,
+    pending: &Arc<Mutex<PendingHostCalls>>,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let id = {
+        let mut lock = pending.lock().map_err(|_| "pending lock poisoned")?;
+        let id = lock.next_id;
+        lock.next_id = lock.next_id.saturating_add(1);
+        id
+    };
+
+    write_message(
+        out,
+        &PluginMessage::Request(RpcRequest {
+            id,
+            method: method.to_string(),
+            params,
+        }),
+    );
+
+    let deadline = std::time::Instant::now() + HOST_CALL_TIMEOUT;
+    let mut stash: HashMap<u64, RpcResponse> = HashMap::new();
+
+    loop {
+        if std::time::Instant::now() > deadline {
+            return Err("host call timed out".to_string());
+        }
+
+        if let Some(resp) = stash.remove(&id) {
+            return if resp.ok {
+                Ok(resp.result)
+            } else {
+                let code = resp.error_code.unwrap_or_else(|| "host.error".into());
+                let msg = resp.error.unwrap_or_else(|| "error".into());
+                Err(format!("{code}: {msg}"))
+            };
+        }
+
+        let msg = {
+            let mut lock = stdin.lock().map_err(|_| "stdin lock poisoned")?;
+            read_message(&mut *lock).ok_or_else(|| "host closed stdin".to_string())?
+        };
+
+        match msg {
+            PluginMessage::Response(resp) => {
+                if resp.id == id {
+                    return if resp.ok {
+                        Ok(resp.result)
+                    } else {
+                        let code = resp.error_code.unwrap_or_else(|| "host.error".into());
+                        let msg = resp.error.unwrap_or_else(|| "error".into());
+                        Err(format!("{code}: {msg}"))
+                    };
+                }
+                stash.insert(resp.id, resp);
+            }
+            PluginMessage::Request(req) => {
+                if let Ok(mut q) = queue.lock() {
+                    q.push_back(req);
+                }
+            }
+            PluginMessage::Event { .. } => {}
+        }
+    }
+}
+
 fn main() {
     env_logger::Builder::from_default_env()
         .format_timestamp(None)
@@ -122,20 +224,71 @@ fn main() {
     };
 
     let stdout = Arc::new(Mutex::new(LineWriter::new(io::stdout())));
-    let stdin = BufReader::new(io::stdin());
+    let stdin = Arc::new(Mutex::new(BufReader::new(io::stdin())));
+    let queue: Arc<Mutex<VecDeque<RpcRequest>>> = Arc::new(Mutex::new(VecDeque::new()));
 
     let mut repo: Option<Box<dyn Vcs>> = None;
 
-    for line in stdin.lines().map_while(Result::ok) {
-        if line.trim().is_empty() {
-            continue;
-        }
+    #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
+    let pending: Arc<Mutex<PendingHostCalls>> = Arc::new(Mutex::new(PendingHostCalls {
+        // Reserve low ids for host->plugin calls.
+        next_id: 1u64 << 63,
+    }));
 
-        let req: RpcRequest = match serde_json::from_str(&line) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("openvcs-git-plugin: bad request: {e} (line={line})");
-                continue;
+    #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
+    {
+        let out = Arc::clone(&stdout);
+        let stdin = Arc::clone(&stdin);
+        let queue = Arc::clone(&queue);
+        let pending = Arc::clone(&pending);
+        set_host_exec(Arc::new(move |cwd, args, env, stdin_text| {
+            let env_obj = env
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect::<serde_json::Map<_, _>>();
+            let res = host_call(
+                &out,
+                &stdin,
+                &queue,
+                &pending,
+                "process.exec",
+                serde_json::json!({
+                    "program": "git",
+                    "cwd": cwd.and_then(|p| p.to_str()).unwrap_or(""),
+                    "args": args,
+                    "env": env_obj,
+                    "stdin": stdin_text.unwrap_or(""),
+                }),
+            )?;
+            Ok(HostExecOutput {
+                success: res.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+                status: res.get("status").and_then(|v| v.as_i64()).unwrap_or(-1) as i32,
+                stdout: res.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                stderr: res.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            })
+        }));
+    }
+
+    loop {
+        let req = if let Ok(mut q) = queue.lock() {
+            q.pop_front()
+        } else {
+            None
+        };
+
+        let req = if let Some(req) = req {
+            req
+        } else {
+            let msg = {
+                let mut lock = stdin.lock().unwrap();
+                match read_message(&mut *lock) {
+                    Some(m) => m,
+                    None => break,
+                }
+            };
+            match msg {
+                PluginMessage::Request(req) => req,
+                PluginMessage::Response(_) | PluginMessage::Event { .. } => continue,
             }
         };
 
