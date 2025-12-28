@@ -1,7 +1,7 @@
 use openvcs_core::models::{ConflictSide, FetchOptions, LogQuery, VcsEvent};
 use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest};
 use openvcs_core::plugin_stdio::{
-    PluginError, parse_json_params, receive_message, respond_shared, send_message_shared,
+    PluginError, ok, ok_null, parse_json_params, receive_message, respond_shared, send_message_shared,
 };
 #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 use openvcs_core::plugin_stdio::{RequestIdState, call_host};
@@ -25,7 +25,9 @@ use std::time::Duration;
 #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
-
+fn to_plugin_error<E: std::fmt::Display>(err: E) -> PluginError {
+    PluginError::message(err.to_string())
+}
 
 #[derive(Debug, Clone, Copy)]
 enum BackendKind {
@@ -81,6 +83,126 @@ fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
         })
 }
 
+fn next_request(
+    queue: &Arc<Mutex<VecDeque<RpcRequest>>>,
+    stdin: &Arc<Mutex<BufReader<io::Stdin>>>,
+) -> Option<RpcRequest> {
+    if let Ok(mut q) = queue.lock() {
+        if let Some(req) = q.pop_front() {
+            return Some(req);
+        }
+    }
+
+    loop {
+        let msg = {
+            let mut lock = stdin.lock().ok()?;
+            receive_message(&mut *lock)?
+        };
+        match msg {
+            PluginMessage::Request(req) => return Some(req),
+            PluginMessage::Response(_) | PluginMessage::Event { .. } => continue,
+        }
+    }
+}
+
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
+fn setup_wasm_host_bridges(
+    stdout: &Arc<Mutex<LineWriter<io::Stdout>>>,
+    stdin: &Arc<Mutex<BufReader<io::Stdin>>>,
+    queue: &Arc<Mutex<VecDeque<RpcRequest>>>,
+    pending: &Arc<Mutex<RequestIdState>>,
+) {
+    let out_exec = Arc::clone(stdout);
+    let stdin_exec = Arc::clone(stdin);
+    let queue_exec = Arc::clone(queue);
+    let pending_exec = Arc::clone(pending);
+    set_process_exec(Arc::new(move |cwd, args, env, stdin_text| {
+        let env_obj = env
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect::<serde_json::Map<_, _>>();
+        let res = call_host(
+            &out_exec,
+            &stdin_exec,
+            &queue_exec,
+            &pending_exec,
+            "process.exec",
+            serde_json::json!({
+              "program": "git",
+              "cwd": cwd.and_then(|p| p.to_str()).unwrap_or(""),
+              "args": args,
+              "env": env_obj,
+              "stdin": stdin_text.unwrap_or(""),
+            }),
+            HOST_CALL_TIMEOUT,
+        )
+        .map_err(|e| {
+            let code = e.code.unwrap_or_else(|| "host.error".into());
+            format!("{code}: {}", e.message)
+        })?;
+        Ok(ProcessExecOutput {
+            success: res
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            status: res.get("status").and_then(|v| v.as_i64()).unwrap_or(-1) as i32,
+            stdout: res
+                .get("stdout")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            stderr: res
+                .get("stderr")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })
+    }));
+
+    let out_read = Arc::clone(stdout);
+    let stdin_read = Arc::clone(stdin);
+    let queue_read = Arc::clone(queue);
+    let pending_read = Arc::clone(pending);
+    host_workspace::set_read(Arc::new(move |path: &str| {
+        let res = call_host(
+            &out_read,
+            &stdin_read,
+            &queue_read,
+            &pending_read,
+            "workspace.readFile",
+            serde_json::json!({ "path": path }),
+            HOST_CALL_TIMEOUT,
+        )
+        .map_err(|e| {
+            let code = e.code.unwrap_or_else(|| "host.error".into());
+            format!("{code}: {}", e.message)
+        })?;
+        Ok(res.as_str().unwrap_or("").as_bytes().to_vec())
+    }));
+
+    let out_write = Arc::clone(stdout);
+    let stdin_write = Arc::clone(stdin);
+    let queue_write = Arc::clone(queue);
+    let pending_write = Arc::clone(pending);
+    host_workspace::set_write(Arc::new(move |path: &str, bytes: &[u8]| {
+        let content = String::from_utf8_lossy(bytes).to_string();
+        let _ = call_host(
+            &out_write,
+            &stdin_write,
+            &queue_write,
+            &pending_write,
+            "workspace.writeFile",
+            serde_json::json!({ "path": path, "content": content }),
+            HOST_CALL_TIMEOUT,
+        )
+        .map_err(|e| {
+            let code = e.code.unwrap_or_else(|| "host.error".into());
+            format!("{code}: {}", e.message)
+        })?;
+        Ok(())
+    }));
+}
+
 fn main() {
     let backend_kind = match parse_backend_kind() {
         Ok(k) => k,
@@ -104,107 +226,12 @@ fn main() {
 
     #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
     {
-        let out_exec = Arc::clone(&stdout);
-        let stdin_exec = Arc::clone(&stdin);
-        let queue_exec = Arc::clone(&queue);
-        let pending_exec = Arc::clone(&pending);
-        set_process_exec(Arc::new(move |cwd, args, env, stdin_text| {
-            let env_obj = env
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect::<serde_json::Map<_, _>>();
-            let res = call_host(
-                &out_exec,
-                &stdin_exec,
-                &queue_exec,
-                &pending_exec,
-                "process.exec",
-                serde_json::json!({
-                  "program": "git",
-                  "cwd": cwd.and_then(|p| p.to_str()).unwrap_or(""),
-                  "args": args,
-                  "env": env_obj,
-                  "stdin": stdin_text.unwrap_or(""),
-                }),
-                HOST_CALL_TIMEOUT,
-            )
-            .map_err(|e| {
-                let code = e.code.unwrap_or_else(|| "host.error".into());
-                format!("{code}: {}", e.message)
-            })?;
-            Ok(ProcessExecOutput {
-                success: res.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
-                status: res.get("status").and_then(|v| v.as_i64()).unwrap_or(-1) as i32,
-                stdout: res.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                stderr: res.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            })
-        }));
-
-        let out_read = Arc::clone(&stdout);
-        let stdin_read = Arc::clone(&stdin);
-        let queue_read = Arc::clone(&queue);
-        let pending_read = Arc::clone(&pending);
-        host_workspace::set_read(Arc::new(move |path: &str| {
-            let res = call_host(
-                &out_read,
-                &stdin_read,
-                &queue_read,
-                &pending_read,
-                "workspace.readFile",
-                serde_json::json!({ "path": path }),
-                HOST_CALL_TIMEOUT,
-            )
-            .map_err(|e| {
-                let code = e.code.unwrap_or_else(|| "host.error".into());
-                format!("{code}: {}", e.message)
-            })?;
-            Ok(res.as_str().unwrap_or("").as_bytes().to_vec())
-        }));
-
-        let out_write = Arc::clone(&stdout);
-        let stdin_write = Arc::clone(&stdin);
-        let queue_write = Arc::clone(&queue);
-        let pending_write = Arc::clone(&pending);
-        host_workspace::set_write(Arc::new(move |path: &str, bytes: &[u8]| {
-            let content = String::from_utf8_lossy(bytes).to_string();
-            let _ = call_host(
-                &out_write,
-                &stdin_write,
-                &queue_write,
-                &pending_write,
-                "workspace.writeFile",
-                serde_json::json!({ "path": path, "content": content }),
-                HOST_CALL_TIMEOUT,
-            )
-            .map_err(|e| {
-                let code = e.code.unwrap_or_else(|| "host.error".into());
-                format!("{code}: {}", e.message)
-            })?;
-            Ok(())
-        }));
+        setup_wasm_host_bridges(&stdout, &stdin, &queue, &pending);
     }
 
     loop {
-        let req = if let Ok(mut q) = queue.lock() {
-            q.pop_front()
-        } else {
-            None
-        };
-
-        let req = if let Some(req) = req {
-            req
-        } else {
-            let msg = {
-                let mut lock = stdin.lock().unwrap();
-                match receive_message(&mut *lock) {
-                    Some(m) => m,
-                    None => break,
-                }
-            };
-            match msg {
-                PluginMessage::Request(req) => req,
-                PluginMessage::Response(_) | PluginMessage::Event { .. } => continue,
-            }
+        let Some(req) = next_request(&queue, &stdin) else {
+            break;
         };
 
         let out = Arc::clone(&stdout);
@@ -215,43 +242,46 @@ fn main() {
         let method = req.method.as_str();
         let params = req.params;
 
-        let res: Result<serde_json::Value, String> = (|| match method {
-            "caps" => Ok(json!(backend_caps(backend_kind))),
+        let res: Result<serde_json::Value, PluginError> = (|| match method {
+            "caps" => ok(backend_caps(backend_kind)),
             "open" => {
                 #[derive(serde::Deserialize)]
                 struct P {
                     path: String,
                 }
-                let p: P = parse_json_params(params)?;
+                let p: P = parse_json_params(params).map_err(PluginError::message)?;
                 let path = PathBuf::from(p.path);
                 repo = Some(match backend_kind {
                     BackendKind::GitSystem => {
                         #[cfg(feature = "system-git")]
                         {
-                            Box::new(
-                                GitSystem::open(&path).map_err(|e| e.to_string())?,
-                            )
+                            Box::new(GitSystem::open(&path).map_err(to_plugin_error)?)
                         }
                         #[cfg(not(feature = "system-git"))]
                         {
-                            return Err("git-system backend not compiled into plugin".to_string());
+                            return Err(PluginError::message(
+                                "git-system backend not compiled into plugin",
+                            ));
                         }
                     }
                     BackendKind::GitLibgit2 => {
                         #[cfg(feature = "libgit2")]
                         {
-                            Box::new(
-                                GitLibGit2::open(&path).map_err(|e| e.to_string())?,
-                            )
+                            Box::new(GitLibGit2::open(&path).map_err(to_plugin_error)?)
                         }
                         #[cfg(not(feature = "libgit2"))]
                         {
-                            return Err("git-libgit2 backend not compiled into plugin".to_string());
+                            return Err(PluginError::message(
+                                "git-libgit2 backend not compiled into plugin",
+                            ));
                         }
                     }
                 });
                 Ok(
-                    json!({"workdir": require_utf8_path(repo.as_ref().unwrap().workdir()).map_err(|e| e.to_string())?}),
+                    json!({
+                        "workdir": require_utf8_path(repo.as_ref().unwrap().workdir())
+                            .map_err(to_plugin_error)?
+                    }),
                 )
             }
             "clone" => {
@@ -260,7 +290,7 @@ fn main() {
                     url: String,
                     dest: String,
                 }
-                let p: P = parse_json_params(params)?;
+                let p: P = parse_json_params(params).map_err(PluginError::message)?;
                 let dest = PathBuf::from(p.dest);
                 repo = Some(match backend_kind {
                     BackendKind::GitSystem => {
@@ -268,12 +298,14 @@ fn main() {
                         {
                             Box::new(
                                 GitSystem::clone(&p.url, &dest, Some(Arc::clone(&on)))
-                                    .map_err(|e| e.to_string())?,
+                                    .map_err(to_plugin_error)?,
                             )
                         }
                         #[cfg(not(feature = "system-git"))]
                         {
-                            return Err("git-system backend not compiled into plugin".to_string());
+                            return Err(PluginError::message(
+                                "git-system backend not compiled into plugin",
+                            ));
                         }
                     }
                     BackendKind::GitLibgit2 => {
@@ -281,36 +313,43 @@ fn main() {
                         {
                             Box::new(
                                 GitLibGit2::clone(&p.url, &dest, Some(Arc::clone(&on)))
-                                    .map_err(|e| e.to_string())?,
+                                    .map_err(to_plugin_error)?,
                             )
                         }
                         #[cfg(not(feature = "libgit2"))]
                         {
-                            return Err("git-libgit2 backend not compiled into plugin".to_string());
+                            return Err(PluginError::message(
+                                "git-libgit2 backend not compiled into plugin",
+                            ));
                         }
                     }
                 });
                 Ok(
-                    json!({"workdir": require_utf8_path(repo.as_ref().unwrap().workdir()).map_err(|e| e.to_string())?}),
+                    json!({
+                        "workdir": require_utf8_path(repo.as_ref().unwrap().workdir())
+                            .map_err(to_plugin_error)?
+                    }),
                 )
             }
             _ => {
                 let repo = repo
                     .as_ref()
-                    .ok_or_else(|| "repo is not open (call 'open' or 'clone' first)".to_string())?;
+                    .ok_or_else(|| {
+                        PluginError::message("repo is not open (call 'open' or 'clone' first)")
+                    })?;
 
                 match method {
                     "workdir" => Ok(json!(
-                        require_utf8_path(repo.workdir()).map_err(|e| e.to_string())?
+                        require_utf8_path(repo.workdir()).map_err(to_plugin_error)?
                     )),
                     "current_branch" => {
-                        Ok(json!(repo.current_branch().map_err(|e| e.to_string())?))
+                        Ok(json!(repo.current_branch().map_err(to_plugin_error)?))
                     }
-                    "branches" => Ok(json!(repo.branches().map_err(|e| e.to_string())?)),
+                    "branches" => Ok(json!(repo.branches().map_err(to_plugin_error)?)),
                     "local_branches" => {
                         let locals: Vec<String> = repo
                             .branches()
-                            .map_err(|e| e.to_string())?
+                            .map_err(to_plugin_error)?
                             .into_iter()
                             .filter(|b| b.kind == BranchKind::Local)
                             .map(|b| b.name)
@@ -323,19 +362,19 @@ fn main() {
                             name: String,
                             checkout: bool,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.create_branch(&p.name, p.checkout)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "checkout_branch" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             name: String,
                         }
-                        let p: P = parse_json_params(params)?;
-                        repo.checkout_branch(&p.name).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
+                        repo.checkout_branch(&p.name).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "ensure_remote" => {
                         #[derive(serde::Deserialize)]
@@ -343,20 +382,20 @@ fn main() {
                             name: String,
                             url: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.ensure_remote(&p.name, &p.url)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
-                    "list_remotes" => Ok(json!(repo.list_remotes().map_err(|e| e.to_string())?)),
+                    "list_remotes" => Ok(json!(repo.list_remotes().map_err(to_plugin_error)?)),
                     "remove_remote" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             name: String,
                         }
-                        let p: P = parse_json_params(params)?;
-                        repo.remove_remote(&p.name).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
+                        repo.remove_remote(&p.name).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "fetch" => {
                         #[derive(serde::Deserialize)]
@@ -364,10 +403,10 @@ fn main() {
                             remote: String,
                             refspec: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.fetch(&p.remote, &p.refspec, Some(Arc::clone(&on)))
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "fetch_with_options" => {
                         #[derive(serde::Deserialize)]
@@ -376,15 +415,15 @@ fn main() {
                             refspec: String,
                             opts: FetchOptions,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.fetch_with_options(
                             &p.remote,
                             &p.refspec,
                             p.opts,
                             Some(Arc::clone(&on)),
                         )
-                        .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "push" => {
                         #[derive(serde::Deserialize)]
@@ -392,10 +431,10 @@ fn main() {
                             remote: String,
                             refspec: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.push(&p.remote, &p.refspec, Some(Arc::clone(&on)))
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "pull_ff_only" => {
                         #[derive(serde::Deserialize)]
@@ -403,10 +442,10 @@ fn main() {
                             remote: String,
                             branch: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.pull_ff_only(&p.remote, &p.branch, Some(Arc::clone(&on)))
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "commit" => {
                         #[derive(serde::Deserialize)]
@@ -416,11 +455,11 @@ fn main() {
                             email: String,
                             paths: Vec<String>,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         let paths: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
                         Ok(json!(
                             repo.commit(&p.message, &p.name, &p.email, &paths)
-                                .map_err(|e| e.to_string())?
+                                .map_err(to_plugin_error)?
                         ))
                     }
                     "commit_index" => {
@@ -430,26 +469,26 @@ fn main() {
                             name: String,
                             email: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         Ok(json!(
                             repo.commit_index(&p.message, &p.name, &p.email)
-                                .map_err(|e| e.to_string())?
+                                .map_err(to_plugin_error)?
                         ))
                     }
                     "status_summary" => {
-                        Ok(json!(repo.status_summary().map_err(|e| e.to_string())?))
+                        Ok(json!(repo.status_summary().map_err(to_plugin_error)?))
                     }
                     "status_payload" => {
-                        Ok(json!(repo.status_payload().map_err(|e| e.to_string())?))
+                        Ok(json!(repo.status_payload().map_err(to_plugin_error)?))
                     }
                     "log_commits" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             query: LogQuery,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         Ok(json!(
-                            repo.log_commits(&p.query).map_err(|e| e.to_string())?
+                            repo.log_commits(&p.query).map_err(to_plugin_error)?
                         ))
                     }
                     "diff_file" => {
@@ -457,10 +496,10 @@ fn main() {
                         struct P {
                             path: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         Ok(json!(
                             repo.diff_file(Path::new(&p.path))
-                                .map_err(|e| e.to_string())?
+                                .map_err(to_plugin_error)?
                         ))
                     }
                     "diff_commit" => {
@@ -468,18 +507,18 @@ fn main() {
                         struct P {
                             rev: String,
                         }
-                        let p: P = parse_json_params(params)?;
-                        Ok(json!(repo.diff_commit(&p.rev).map_err(|e| e.to_string())?))
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
+                        Ok(json!(repo.diff_commit(&p.rev).map_err(to_plugin_error)?))
                     }
                     "conflict_details" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             path: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         Ok(json!(
                             repo.conflict_details(Path::new(&p.path))
-                                .map_err(|e| e.to_string())?
+                                .map_err(to_plugin_error)?
                         ))
                     }
                     "checkout_conflict_side" => {
@@ -488,10 +527,10 @@ fn main() {
                             path: String,
                             side: ConflictSide,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.checkout_conflict_side(Path::new(&p.path), p.side)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "write_merge_result" => {
                         #[derive(serde::Deserialize)]
@@ -499,39 +538,39 @@ fn main() {
                             path: String,
                             content: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.write_merge_result(Path::new(&p.path), p.content.as_bytes())
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "stage_patch" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             patch: String,
                         }
-                        let p: P = parse_json_params(params)?;
-                        repo.stage_patch(&p.patch).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
+                        repo.stage_patch(&p.patch).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "discard_paths" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             paths: Vec<String>,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         let pb: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
-                        repo.discard_paths(&pb).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        repo.discard_paths(&pb).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "apply_reverse_patch" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             patch: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.apply_reverse_patch(&p.patch)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "delete_branch" => {
                         #[derive(serde::Deserialize)]
@@ -539,10 +578,10 @@ fn main() {
                             name: String,
                             force: bool,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.delete_branch(&p.name, p.force)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "rename_branch" => {
                         #[derive(serde::Deserialize)]
@@ -550,40 +589,40 @@ fn main() {
                             old: String,
                             new: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.rename_branch(&p.old, &p.new)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "merge_into_current" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             name: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.merge_into_current(&p.name)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "merge_abort" => {
-                        repo.merge_abort().map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        repo.merge_abort().map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "merge_continue" => {
-                        repo.merge_continue().map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        repo.merge_continue().map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "merge_in_progress" => {
-                        Ok(json!(repo.merge_in_progress().map_err(|e| e.to_string())?))
+                        Ok(json!(repo.merge_in_progress().map_err(to_plugin_error)?))
                     }
                     "branch_upstream" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             branch: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         Ok(json!(
-                            repo.branch_upstream(&p.branch).map_err(|e| e.to_string())?
+                            repo.branch_upstream(&p.branch).map_err(to_plugin_error)?
                         ))
                     }
                     "set_branch_upstream" => {
@@ -592,37 +631,37 @@ fn main() {
                             branch: String,
                             upstream: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.set_branch_upstream(&p.branch, &p.upstream)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "hard_reset_head" => {
-                        repo.hard_reset_head().map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        repo.hard_reset_head().map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "reset_soft_to" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             rev: String,
                         }
-                        let p: P = parse_json_params(params)?;
-                        repo.reset_soft_to(&p.rev).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
+                        repo.reset_soft_to(&p.rev).map_err(to_plugin_error)?;
+                        ok_null()
                     }
-                    "get_identity" => Ok(json!(repo.get_identity().map_err(|e| e.to_string())?)),
+                    "get_identity" => Ok(json!(repo.get_identity().map_err(to_plugin_error)?)),
                     "set_identity_local" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             name: String,
                             email: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.set_identity_local(&p.name, &p.email)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
-                    "stash_list" => Ok(json!(repo.stash_list().map_err(|e| e.to_string())?)),
+                    "stash_list" => Ok(json!(repo.stash_list().map_err(to_plugin_error)?)),
                     "stash_push" => {
                         #[derive(serde::Deserialize)]
                         struct P {
@@ -630,90 +669,90 @@ fn main() {
                             include_untracked: bool,
                             paths: Vec<String>,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         let pb: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
                         repo.stash_push(&p.message, p.include_untracked, &pb)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "stash_apply" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             selector: String,
                         }
-                        let p: P = parse_json_params(params)?;
-                        repo.stash_apply(&p.selector).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
+                        repo.stash_apply(&p.selector).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "stash_pop" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             selector: String,
                         }
-                        let p: P = parse_json_params(params)?;
-                        repo.stash_pop(&p.selector).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
+                        repo.stash_pop(&p.selector).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "stash_drop" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             selector: String,
                         }
-                        let p: P = parse_json_params(params)?;
-                        repo.stash_drop(&p.selector).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
+                        repo.stash_drop(&p.selector).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "stash_show" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             selector: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         Ok(json!(
-                            repo.stash_show(&p.selector).map_err(|e| e.to_string())?
+                            repo.stash_show(&p.selector).map_err(to_plugin_error)?
                         ))
                     }
                     "lfs_fetch" => {
-                        repo.lfs_fetch().map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        repo.lfs_fetch().map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "lfs_pull" => {
-                        repo.lfs_pull().map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        repo.lfs_pull().map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "lfs_prune" => {
-                        repo.lfs_prune().map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        repo.lfs_prune().map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "lfs_track" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             paths: Vec<String>,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         let pb: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
-                        repo.lfs_track(&pb).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        repo.lfs_track(&pb).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "lfs_untrack" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             paths: Vec<String>,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         let pb: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
-                        repo.lfs_untrack(&pb).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        repo.lfs_untrack(&pb).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "lfs_is_tracked" => {
                         #[derive(serde::Deserialize)]
                         struct P {
                             path: String,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         Ok(json!(
                             repo.lfs_is_tracked(Path::new(&p.path))
-                                .map_err(|e| e.to_string())?
+                                .map_err(to_plugin_error)?
                         ))
                     }
                     "cherry_pick" => {
@@ -721,9 +760,9 @@ fn main() {
                         struct P {
                             rev: String,
                         }
-                        let p: P = parse_json_params(params)?;
-                        repo.cherry_pick(&p.rev).map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
+                        repo.cherry_pick(&p.rev).map_err(to_plugin_error)?;
+                        ok_null()
                     }
                     "revert_commit" => {
                         #[derive(serde::Deserialize)]
@@ -731,19 +770,16 @@ fn main() {
                             rev: String,
                             no_edit: bool,
                         }
-                        let p: P = parse_json_params(params)?;
+                        let p: P = parse_json_params(params).map_err(PluginError::message)?;
                         repo.revert_commit(&p.rev, p.no_edit)
-                            .map_err(|e| e.to_string())?;
-                        Ok(serde_json::Value::Null)
+                            .map_err(to_plugin_error)?;
+                        ok_null()
                     }
-                    other => Err(format!("unknown method '{other}'")),
+                    other => Err(PluginError::message(format!("unknown method '{other}'"))),
                 }
             }
         })();
 
-        match res {
-            Ok(val) => respond_shared(&stdout, req.id, Ok(val)),
-            Err(e) => respond_shared(&stdout, req.id, Err(PluginError::message(e))),
-        }
+        respond_shared(&stdout, req.id, res);
     }
 }
