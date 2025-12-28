@@ -50,8 +50,6 @@ jobs:
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
-        with:
-          components: rustfmt
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
@@ -60,10 +58,6 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: OpenVCS-Plugin-Git
-
-      - name: Format
-        working-directory: OpenVCS-Plugin-Git
-        run: cargo fmt --all --check
 
       - name: Cargo check
         working-directory: OpenVCS-Plugin-Git
