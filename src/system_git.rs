@@ -142,15 +142,11 @@ impl GitSystem {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg: "missing host exec bridge (process.exec)".to_string(),
-            })?;
             let env = vec![
                 ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
                 ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
             ];
-            let host_out = exec(cwd, &argv, &env, None)
+            let host_out = crate::host_process::exec(cwd, &argv, &env, None)
                 .map_err(|e| VcsError::Backend {
                     backend: GIT_SYSTEM_ID,
                     msg: e,
@@ -247,17 +243,15 @@ impl GitSystem {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg: "missing host exec bridge (process.exec)".to_string(),
-            })?;
             let env = vec![
                 ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
                 ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
             ];
-            let out = exec(cwd, &argv, &env, None).map_err(|e| VcsError::Backend {
+            let out = crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| {
+                VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: e,
+                }
             })?;
             if out.success {
                 log::trace!("git(capture): exit={}, stdout_bytes={}", out.status, out.stdout.len());
@@ -365,15 +359,11 @@ impl GitSystem {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg: "missing host exec bridge (process.exec)".to_string(),
-            })?;
             let env = vec![
                 ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
                 ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
             ];
-            let out = exec(cwd, &argv, &env, None).map_err(|e| VcsError::Backend {
+            let out = crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: e,
             })?;
@@ -415,15 +405,11 @@ impl GitSystem {
         #[cfg(target_arch = "wasm32")]
         {
             let argv: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
-            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg: "missing host exec bridge (process.exec)".to_string(),
-            })?;
             let env = vec![
                 ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
                 ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
             ];
-            let out = exec(cwd, &argv, &env, Some(input)).map_err(|e| VcsError::Backend {
+            let out = crate::host_process::exec(cwd, &argv, &env, Some(input)).map_err(|e| VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: e,
             })?;
@@ -486,16 +472,12 @@ impl GitSystem {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg: "missing host exec bridge (process.exec)".to_string(),
-            })?;
             let argv = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
             let env = vec![
                 ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
                 ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
             ];
-            let out = exec(Some(cwd), &argv, &env, None).map_err(|e| VcsError::Backend {
+            let out = crate::host_process::exec(Some(cwd), &argv, &env, None).map_err(|e| VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: e,
             })?;

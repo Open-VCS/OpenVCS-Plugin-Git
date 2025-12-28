@@ -3,26 +3,17 @@ use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest};
 use openvcs_core::plugin_stdio::{
     PluginError, ok, ok_null, parse_json_params, receive_message, respond_shared, send_message_shared,
 };
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-use openvcs_core::plugin_stdio::{RequestIdState, call_host};
-use openvcs_core::{OnEvent, Vcs, VcsError, models::BranchKind};
+use openvcs_core::{models::BranchKind, OnEvent, Vcs, VcsError};
 #[cfg(feature = "libgit2")]
 use openvcs_plugin_git::GitLibGit2;
 #[cfg(feature = "system-git")]
 use openvcs_plugin_git::GitSystem;
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-use openvcs_plugin_git::host_process::{ProcessExecOutput, set_process_exec};
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-use openvcs_plugin_git::host_workspace;
 use serde_json::json;
-use std::collections::VecDeque;
-use std::io::{self, BufReader, LineWriter};
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 use std::time::Duration;
 
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn to_plugin_error<E: std::fmt::Display>(err: E) -> PluginError {
@@ -84,7 +75,7 @@ fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
 }
 
 fn next_request(
-    queue: &Arc<Mutex<VecDeque<RpcRequest>>>,
+    queue: &Arc<Mutex<std::collections::VecDeque<RpcRequest>>>,
     stdin: &Arc<Mutex<BufReader<io::Stdin>>>,
 ) -> Option<RpcRequest> {
     if let Ok(mut q) = queue.lock() {
@@ -105,104 +96,6 @@ fn next_request(
     }
 }
 
-#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-fn setup_wasm_host_bridges(
-    stdout: &Arc<Mutex<LineWriter<io::Stdout>>>,
-    stdin: &Arc<Mutex<BufReader<io::Stdin>>>,
-    queue: &Arc<Mutex<VecDeque<RpcRequest>>>,
-    pending: &Arc<Mutex<RequestIdState>>,
-) {
-    let out_exec = Arc::clone(stdout);
-    let stdin_exec = Arc::clone(stdin);
-    let queue_exec = Arc::clone(queue);
-    let pending_exec = Arc::clone(pending);
-    set_process_exec(Arc::new(move |cwd, args, env, stdin_text| {
-        let env_obj = env
-            .iter()
-            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-            .collect::<serde_json::Map<_, _>>();
-        let res = call_host(
-            &out_exec,
-            &stdin_exec,
-            &queue_exec,
-            &pending_exec,
-            "process.exec",
-            serde_json::json!({
-              "program": "git",
-              "cwd": cwd.and_then(|p| p.to_str()).unwrap_or(""),
-              "args": args,
-              "env": env_obj,
-              "stdin": stdin_text.unwrap_or(""),
-            }),
-            HOST_CALL_TIMEOUT,
-        )
-        .map_err(|e| {
-            let code = e.code.unwrap_or_else(|| "host.error".into());
-            format!("{code}: {}", e.message)
-        })?;
-        Ok(ProcessExecOutput {
-            success: res
-                .get("success")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            status: res.get("status").and_then(|v| v.as_i64()).unwrap_or(-1) as i32,
-            stdout: res
-                .get("stdout")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            stderr: res
-                .get("stderr")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-        })
-    }));
-
-    let out_read = Arc::clone(stdout);
-    let stdin_read = Arc::clone(stdin);
-    let queue_read = Arc::clone(queue);
-    let pending_read = Arc::clone(pending);
-    host_workspace::set_read(Arc::new(move |path: &str| {
-        let res = call_host(
-            &out_read,
-            &stdin_read,
-            &queue_read,
-            &pending_read,
-            "workspace.readFile",
-            serde_json::json!({ "path": path }),
-            HOST_CALL_TIMEOUT,
-        )
-        .map_err(|e| {
-            let code = e.code.unwrap_or_else(|| "host.error".into());
-            format!("{code}: {}", e.message)
-        })?;
-        Ok(res.as_str().unwrap_or("").as_bytes().to_vec())
-    }));
-
-    let out_write = Arc::clone(stdout);
-    let stdin_write = Arc::clone(stdin);
-    let queue_write = Arc::clone(queue);
-    let pending_write = Arc::clone(pending);
-    host_workspace::set_write(Arc::new(move |path: &str, bytes: &[u8]| {
-        let content = String::from_utf8_lossy(bytes).to_string();
-        let _ = call_host(
-            &out_write,
-            &stdin_write,
-            &queue_write,
-            &pending_write,
-            "workspace.writeFile",
-            serde_json::json!({ "path": path, "content": content }),
-            HOST_CALL_TIMEOUT,
-        )
-        .map_err(|e| {
-            let code = e.code.unwrap_or_else(|| "host.error".into());
-            format!("{code}: {}", e.message)
-        })?;
-        Ok(())
-    }));
-}
-
 fn main() {
     let backend_kind = match parse_backend_kind() {
         Ok(k) => k,
@@ -212,22 +105,21 @@ fn main() {
         }
     };
 
-    let stdout = Arc::new(Mutex::new(LineWriter::new(io::stdout())));
-    let stdin = Arc::new(Mutex::new(BufReader::new(io::stdin())));
-    let queue: Arc<Mutex<VecDeque<RpcRequest>>> = Arc::new(Mutex::new(VecDeque::new()));
+    #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
+    let next_id = 1u64 << 63;
+
+    #[cfg(not(all(feature = "system-git", target_arch = "wasm32")))]
+    let next_id = 1u64;
 
     let mut repo: Option<Box<dyn Vcs>> = None;
 
-    #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-    let pending: Arc<Mutex<RequestIdState>> = Arc::new(Mutex::new(RequestIdState {
-        // Reserve low ids for host->plugin calls.
-        next_id: 1u64 << 63,
-    }));
+    openvcs_core::host::init_stdio_default(next_id, HOST_CALL_TIMEOUT);
 
-    #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-    {
-        setup_wasm_host_bridges(&stdout, &stdin, &queue, &pending);
-    }
+    let stdout = Arc::clone(openvcs_core::host::stdout().unwrap());
+    let stdin = Arc::clone(openvcs_core::host::stdin().unwrap());
+    let queue = Arc::clone(openvcs_core::host::queue().unwrap());
+
+    // `openvcs_core::host` now owns the stdio/queue/ids plumbing; plugins only call init.
 
     loop {
         let Some(req) = next_request(&queue, &stdin) else {
