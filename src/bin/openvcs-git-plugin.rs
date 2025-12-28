@@ -1,48 +1,39 @@
 use openvcs_core::models::{ConflictSide, FetchOptions, LogQuery, VcsEvent};
-use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest, RpcResponse};
+use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest};
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
+use openvcs_core::plugin_protocol::RpcResponse;
+use openvcs_core::plugin_stdio::{
+    PluginError, parse_json_params, read_message, respond_shared, write_message_shared,
+};
 use openvcs_core::{OnEvent, Vcs, VcsError, models::BranchKind};
 #[cfg(feature = "libgit2")]
 use openvcs_plugin_git::GitLibGit2;
 #[cfg(feature = "system-git")]
 use openvcs_plugin_git::GitSystem;
-#[cfg(feature = "system-git")]
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 use openvcs_plugin_git::host_exec::{HostExecOutput, set_host_exec};
-#[cfg(feature = "system-git")]
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 use openvcs_plugin_git::host_workspace;
-use serde::de::DeserializeOwned;
 use serde_json::json;
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::io::{self, BufRead, BufReader, LineWriter, Write};
+use std::io::{self, BufReader, LineWriter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
-#[cfg(feature = "system-git")]
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 #[derive(Debug)]
 struct PendingHostCalls {
     next_id: u64,
 }
 
-fn read_message<R: BufRead>(stdin: &mut R) -> Option<PluginMessage> {
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let n = stdin.read_line(&mut line).ok()?;
-        if n == 0 {
-            return None;
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(msg) = serde_json::from_str::<PluginMessage>(trimmed) {
-            return Some(msg);
-        }
-    }
-}
+
 
 #[derive(Debug, Clone, Copy)]
 enum BackendKind {
@@ -98,50 +89,7 @@ fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
         })
 }
 
-fn parse_json_params<T: DeserializeOwned>(value: serde_json::Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn write_message(out: &Arc<Mutex<LineWriter<io::Stdout>>>, msg: &PluginMessage) {
-    if let Ok(mut w) = out.lock() {
-        let _ = writeln!(
-            w,
-            "{}",
-            serde_json::to_string(msg).unwrap_or_else(|_| "{}".into())
-        );
-        let _ = w.flush();
-    }
-}
-
-fn respond_ok(out: &Arc<Mutex<LineWriter<io::Stdout>>>, id: u64, result: serde_json::Value) {
-    write_message(
-        out,
-        &PluginMessage::Response(RpcResponse {
-            id,
-            ok: true,
-            result,
-            error: None,
-            error_code: None,
-            error_data: None,
-        }),
-    );
-}
-
-fn respond_err(out: &Arc<Mutex<LineWriter<io::Stdout>>>, id: u64, msg: String) {
-    write_message(
-        out,
-        &PluginMessage::Response(RpcResponse {
-            id,
-            ok: false,
-            result: serde_json::Value::Null,
-            error: Some(msg),
-            error_code: None,
-            error_data: None,
-        }),
-    );
-}
-
-#[cfg(feature = "system-git")]
+#[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 fn host_call(
     out: &Arc<Mutex<LineWriter<io::Stdout>>>,
     stdin: &Arc<Mutex<BufReader<io::Stdin>>>,
@@ -157,7 +105,7 @@ fn host_call(
         id
     };
 
-    write_message(
+    write_message_shared(
         out,
         &PluginMessage::Request(RpcRequest {
             id,
@@ -329,7 +277,7 @@ fn main() {
 
         let out = Arc::clone(&stdout);
         let on: OnEvent = Arc::new(move |evt: VcsEvent| {
-            write_message(&out, &PluginMessage::Event { event: evt });
+            write_message_shared(&out, &PluginMessage::Event { event: evt });
         });
 
         let method = req.method.as_str();
@@ -862,8 +810,8 @@ fn main() {
         })();
 
         match res {
-            Ok(val) => respond_ok(&stdout, req.id, val),
-            Err(e) => respond_err(&stdout, req.id, e),
+            Ok(val) => respond_shared(&stdout, req.id, Ok(val)),
+            Err(e) => respond_shared(&stdout, req.id, Err(PluginError::message(e))),
         }
     }
 }
