@@ -9,6 +9,8 @@ This directory is the OpenVCS plugin bundle for Git.
 
 To build the plugin executable in dev: `cargo build --bin openvcs-git-plugin`
 
+To build the distributable plugin bundle (recommended): `cargo dist`
+
 Backend selection is controlled by Cargo features:
 - Default: `system-git`
 - Optional: `libgit2` (enable with `--features libgit2`)
