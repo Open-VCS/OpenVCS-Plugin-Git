@@ -97,6 +97,14 @@ jobs:
           path: OpenVCS-Core
           fetch-depth: 0
 
+      - name: Checkout OpenVCS-SDK (target ref)
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: ${{ github.repository_owner }}/OpenVCS-SDK
+          ref: ${{ env.TARGET_REF }}
+          path: OpenVCS-SDK
+          fetch-depth: 0
+
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
 
@@ -106,45 +114,36 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          workspaces: OpenVCS-Plugin-Git
+          workspaces: |
+            OpenVCS-Plugin-Git
+            OpenVCS-SDK
 
-      - name: Build plugin
-        working-directory: OpenVCS-Plugin-Git
-        run: cargo build --release -p openvcs-git-plugin
-
-      - name: Assemble bundle (unix)
+      - name: Build + package (.ovcsp) (unix)
         if: runner.os != 'Windows'
         shell: bash
-        working-directory: OpenVCS-Plugin-Git
+        working-directory: OpenVCS-SDK
         run: |
           set -euo pipefail
           ARCH="$(uname -m)"
-          PLUGIN_ID="openvcs.git"
-          OUT="dist/${PLUGIN_ID}-${{ runner.os }}-${ARCH}"
-          mkdir -p "${OUT}/bin"
-          cp openvcs.plugin.json "${OUT}/openvcs.plugin.json"
-          cp target/release/openvcs-git-plugin "${OUT}/bin/openvcs-git-plugin"
-          tar -C dist -czf "${PLUGIN_ID}-${{ runner.os }}-${ARCH}.tar.gz" "$(basename "${OUT}")"
+          cargo run --release -- --plugin-dir ../OpenVCS-Plugin-Git --out dist
+          mv "dist/openvcs.git.ovcsp" "dist/openvcs.git-${{ runner.os }}-${ARCH}.ovcsp"
 
-      - name: Assemble bundle (windows)
+      - name: Build + package (.ovcsp) (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        working-directory: OpenVCS-Plugin-Git
+        working-directory: OpenVCS-SDK
         run: |
-          $pluginId = "openvcs.git"
-          $out = "dist/$pluginId-Windows-x86_64"
-          New-Item -ItemType Directory -Force -Path "$out/bin" | Out-Null
-          Copy-Item openvcs.plugin.json "$out/openvcs.plugin.json" -Force
-          Copy-Item target\\release\\openvcs-git-plugin.exe "$out/bin/openvcs-git-plugin.exe" -Force
-          Compress-Archive -Path "$out/*" -DestinationPath "$pluginId-Windows-x86_64.zip" -Force
+          $arch = $env:PROCESSOR_ARCHITECTURE
+          if ([string]::IsNullOrWhiteSpace($arch)) { $arch = "x86_64" }
+          cargo run --release -- --plugin-dir ..\\OpenVCS-Plugin-Git --out dist
+          Move-Item -Path "dist\\openvcs.git.ovcsp" -Destination ("dist\\openvcs.git-Windows-{0}.ovcsp" -f $arch) -Force
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
           name: openvcs-git-nightly-${{ runner.os }}
           path: |
-            OpenVCS-Plugin-Git/openvcs.git-*.tar.gz
-            OpenVCS-Plugin-Git/openvcs.git-*.zip
+            OpenVCS-SDK/dist/openvcs.git-*.ovcsp
 
   release:
     name: Publish rolling nightly prerelease

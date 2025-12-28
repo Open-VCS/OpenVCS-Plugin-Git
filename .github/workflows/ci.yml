@@ -67,8 +67,8 @@ jobs:
 
       - name: Cargo check
         working-directory: OpenVCS-Plugin-Git
-        run: cargo check --workspace --all-targets
+        run: cargo check --all-targets
 
       - name: Test
         working-directory: OpenVCS-Plugin-Git
-        run: cargo test --workspace
+        run: cargo test
