@@ -43,3 +43,36 @@ pub mod host_exec {
         HOST_EXEC.get()
     }
 }
+
+#[cfg(feature = "system-git")]
+pub mod host_workspace {
+    use std::sync::{Arc, OnceLock};
+
+    pub type WorkspaceReadFn =
+        dyn Fn(&str) -> Result<Vec<u8>, String> + Send + Sync + 'static;
+    pub type WorkspaceWriteFn =
+        dyn Fn(&str, &[u8]) -> Result<(), String> + Send + Sync + 'static;
+
+    static READ: OnceLock<Arc<WorkspaceReadFn>> = OnceLock::new();
+    static WRITE: OnceLock<Arc<WorkspaceWriteFn>> = OnceLock::new();
+
+    pub fn set_read(f: Arc<WorkspaceReadFn>) {
+        let _ = READ.set(f);
+    }
+
+    pub fn set_write(f: Arc<WorkspaceWriteFn>) {
+        let _ = WRITE.set(f);
+    }
+
+    pub fn read(path: &str) -> Result<Vec<u8>, String> {
+        let f = READ.get().ok_or_else(|| "missing host workspace.readFile".to_string())?;
+        f(path)
+    }
+
+    pub fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
+        let f = WRITE
+            .get()
+            .ok_or_else(|| "missing host workspace.writeFile".to_string())?;
+        f(path, bytes)
+    }
+}

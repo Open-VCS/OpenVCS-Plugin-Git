@@ -7,6 +7,8 @@ use openvcs_plugin_git::GitLibGit2;
 use openvcs_plugin_git::GitSystem;
 #[cfg(feature = "system-git")]
 use openvcs_plugin_git::host_exec::{HostExecOutput, set_host_exec};
+#[cfg(feature = "system-git")]
+use openvcs_plugin_git::host_workspace;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use std::collections::HashMap;
@@ -237,20 +239,20 @@ fn main() {
 
     #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
     {
-        let out = Arc::clone(&stdout);
-        let stdin = Arc::clone(&stdin);
-        let queue = Arc::clone(&queue);
-        let pending = Arc::clone(&pending);
+        let out_exec = Arc::clone(&stdout);
+        let stdin_exec = Arc::clone(&stdin);
+        let queue_exec = Arc::clone(&queue);
+        let pending_exec = Arc::clone(&pending);
         set_host_exec(Arc::new(move |cwd, args, env, stdin_text| {
             let env_obj = env
                 .iter()
                 .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                 .collect::<serde_json::Map<_, _>>();
             let res = host_call(
-                &out,
-                &stdin,
-                &queue,
-                &pending,
+                &out_exec,
+                &stdin_exec,
+                &queue_exec,
+                &pending_exec,
                 "process.exec",
                 serde_json::json!({
                     "program": "git",
@@ -266,6 +268,39 @@ fn main() {
                 stdout: res.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 stderr: res.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             })
+        }));
+
+        let out_read = Arc::clone(&stdout);
+        let stdin_read = Arc::clone(&stdin);
+        let queue_read = Arc::clone(&queue);
+        let pending_read = Arc::clone(&pending);
+        host_workspace::set_read(Arc::new(move |path: &str| {
+            let res = host_call(
+                &out_read,
+                &stdin_read,
+                &queue_read,
+                &pending_read,
+                "workspace.readFile",
+                serde_json::json!({ "path": path }),
+            )?;
+            Ok(res.as_str().unwrap_or("").as_bytes().to_vec())
+        }));
+
+        let out_write = Arc::clone(&stdout);
+        let stdin_write = Arc::clone(&stdin);
+        let queue_write = Arc::clone(&queue);
+        let pending_write = Arc::clone(&pending);
+        host_workspace::set_write(Arc::new(move |path: &str, bytes: &[u8]| {
+            let content = String::from_utf8_lossy(bytes).to_string();
+            let _ = host_call(
+                &out_write,
+                &stdin_write,
+                &queue_write,
+                &pending_write,
+                "workspace.writeFile",
+                serde_json::json!({ "path": path, "content": content }),
+            )?;
+            Ok(())
         }));
     }
 

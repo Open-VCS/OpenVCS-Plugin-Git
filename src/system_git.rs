@@ -633,17 +633,30 @@ impl GitSystem {
         }
 
         let abs = self.workdir.join(rel);
-        if !abs.exists() {
-            return Ok(false);
-        }
+        #[cfg(target_arch = "wasm32")]
+        let work_bytes = {
+            let bytes = crate::host_workspace::read(rel).map_err(|msg| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg,
+            })?;
+            if bytes.len() > 8 * 1024 * 1024 {
+                return Ok(false);
+            }
+            bytes
+        };
 
-        let meta = fs::metadata(&abs).map_err(VcsError::Io)?;
-        // Avoid reading huge files for heuristic checks.
-        if meta.len() > 8 * 1024 * 1024 {
-            return Ok(false);
-        }
-
-        let work_bytes = fs::read(&abs).map_err(VcsError::Io)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let work_bytes = {
+            if !abs.exists() {
+                return Ok(false);
+            }
+            let meta = fs::metadata(&abs).map_err(VcsError::Io)?;
+            // Avoid reading huge files for heuristic checks.
+            if meta.len() > 8 * 1024 * 1024 {
+                return Ok(false);
+            }
+            fs::read(&abs).map_err(VcsError::Io)?
+        };
 
         let repo_root = self.workdir.clone();
         let spec_ours = format!(":2:{rel}");
@@ -1571,13 +1584,25 @@ impl Vcs for GitSystem {
         } else {
             self.workdir.join(path)
         };
-        if let Some(parent) = abs.parent()
-            && !parent.exists()
-        {
-            fs::create_dir_all(parent).map_err(VcsError::Io)?;
-        }
-        fs::write(&abs, content).map_err(VcsError::Io)?;
         let rel = Self::path_str(path)?;
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::host_workspace::write(rel, content).map_err(|msg| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg,
+            })?;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(parent) = abs.parent()
+                && !parent.exists()
+            {
+                fs::create_dir_all(parent).map_err(VcsError::Io)?;
+            }
+            fs::write(&abs, content).map_err(VcsError::Io)?;
+        }
         Self::run_git(Some(&self.workdir), ["add", "--", rel])?;
         Ok(())
     }
