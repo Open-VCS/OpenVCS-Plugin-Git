@@ -449,47 +449,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "openvcs-git"
+name = "openvcs-plugin-git"
 version = "0.1.0"
 dependencies = [
- "linkme",
- "log",
- "openvcs-core",
-]
-
-[[package]]
-name = "openvcs-git-functions"
-version = "0.1.0"
-dependencies = [
- "openvcs-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "openvcs-git-libgit2"
-version = "0.1.0"
-dependencies = [
+ "env_logger",
  "git2",
  "linkme",
  "log",
  "openvcs-core",
  "serde",
+ "serde_json",
  "thiserror",
  "time",
-]
-
-[[package]]
-name = "openvcs-git-plugin"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "openvcs-core",
- "openvcs-git",
- "openvcs-git-libgit2",
- "serde",
- "serde_json",
 ]
 
 [[package]]

@@ -7,4 +7,8 @@ This directory is the OpenVCS plugin bundle for Git.
   - `Backend/built-in-plugins/openvcs.git/bin/openvcs-git-plugin` (packaged install), or
   - `target/{debug|release}/openvcs-git-plugin` (dev fallback).
 
-To build the plugin executable in dev: `cargo build -p openvcs-git-plugin`
+To build the plugin executable in dev: `cargo build --bin openvcs-git-plugin`
+
+Backend selection is controlled by Cargo features:
+- Default: `system-git`
+- Optional: `libgit2` (enable with `--features libgit2`)

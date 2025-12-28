@@ -1,6 +1,10 @@
 use openvcs_core::models::{ConflictSide, FetchOptions, LogQuery, VcsEvent};
 use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest, RpcResponse};
 use openvcs_core::{OnEvent, Vcs, VcsError, models::BranchKind};
+#[cfg(feature = "libgit2")]
+use openvcs_plugin_git::GitLibGit2;
+#[cfg(feature = "system-git")]
+use openvcs_plugin_git::GitSystem;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use std::io::{self, BufRead, BufReader, LineWriter, Write};
@@ -157,7 +161,7 @@ fn main() {
                         #[cfg(feature = "system-git")]
                         {
                             Box::new(
-                                openvcs_git::GitSystem::open(&path).map_err(|e| e.to_string())?,
+                                GitSystem::open(&path).map_err(|e| e.to_string())?,
                             )
                         }
                         #[cfg(not(feature = "system-git"))]
@@ -169,8 +173,7 @@ fn main() {
                         #[cfg(feature = "libgit2")]
                         {
                             Box::new(
-                                openvcs_git_libgit2::GitLibGit2::open(&path)
-                                    .map_err(|e| e.to_string())?,
+                                GitLibGit2::open(&path).map_err(|e| e.to_string())?,
                             )
                         }
                         #[cfg(not(feature = "libgit2"))]
@@ -196,7 +199,7 @@ fn main() {
                         #[cfg(feature = "system-git")]
                         {
                             Box::new(
-                                openvcs_git::GitSystem::clone(&p.url, &dest, Some(Arc::clone(&on)))
+                                GitSystem::clone(&p.url, &dest, Some(Arc::clone(&on)))
                                     .map_err(|e| e.to_string())?,
                             )
                         }
@@ -209,12 +212,8 @@ fn main() {
                         #[cfg(feature = "libgit2")]
                         {
                             Box::new(
-                                openvcs_git_libgit2::GitLibGit2::clone(
-                                    &p.url,
-                                    &dest,
-                                    Some(Arc::clone(&on)),
-                                )
-                                .map_err(|e| e.to_string())?,
+                                GitLibGit2::clone(&p.url, &dest, Some(Arc::clone(&on)))
+                                    .map_err(|e| e.to_string())?,
                             )
                         }
                         #[cfg(not(feature = "libgit2"))]

@@ -1,8 +1,29 @@
-[workspace]
-members = [
-  "src/openvcs-git-plugin",
-  "src/openvcs-git-functions",
-  "src/openvcs-git",
-  "src/openvcs-git-libgit2",
-]
-resolver = "2"
+[package]
+name = "openvcs-plugin-git"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["system-git"]
+system-git = []
+libgit2 = ["dep:git2", "dep:thiserror", "dep:time"]
+
+[dependencies]
+openvcs-core = { path = "../OpenVCS-Core", features = ["plugin-protocol", "vcs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+linkme = "0.3"
+
+git2 = { version = "0.20", optional = true }
+thiserror = { version = "2", optional = true }
+time = { version = "0.3", features = ["parsing", "formatting"], optional = true }
+
+[[bin]]
+name = "openvcs-git-plugin"
+path = "src/openvcs-git-plugin/src/main.rs"
+
+[[bin]]
+name = "openvcs-git-functions"
+path = "src/openvcs-git-functions/src/main.rs"

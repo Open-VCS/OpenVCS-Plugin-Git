@@ -6,18 +6,19 @@ This repository contains the built-in Git plugin bundle for OpenVCS (a plugin ma
 ## Project Structure & Module Organization
 - `openvcs.plugin.json`: plugin manifest consumed by OpenVCS (declares `openvcs.git` and the `openvcs-git-plugin` executable).
 - `src/openvcs-git-plugin/`: plugin executable; speaks the OpenVCS plugin protocol over stdin/stdout and selects a backend via `--backend`.
-- `src/openvcs-git/`: “system git” backend (shells out to `git`).
-- `src/openvcs-git-libgit2/`: libgit2 backend (via the `git2` crate); low-level logic lives in `src/openvcs-git-libgit2/src/lowlevel.rs`.
+- `src/openvcs-git/`: “system git” backend (shells out to `git`), compiled with the `system-git` feature (default).
+- `src/openvcs-git-libgit2/`: libgit2 backend (via the `git2` crate), compiled with the `libgit2` feature; low-level logic lives in `src/openvcs-git-libgit2/src/lowlevel.rs`.
 
 Note: these crates are typically built as part of the `OpenVCS-Client` Cargo workspace at `Backend/built-in-plugins/openvcs.git/`.
 
 ## Build, Test, and Development Commands
 Run from the `OpenVCS-Client` workspace root (recommended):
-- `cargo build -p openvcs-git-plugin`: build the plugin binary.
-- `cargo build -p openvcs-git-plugin --release`: release build.
+- `cargo build --bin openvcs-git-plugin`: build the plugin binary.
+- `cargo build --bin openvcs-git-plugin --release`: release build.
+- `cargo build --bin openvcs-git-plugin --features libgit2`: build with libgit2 backend compiled in.
 - `cargo fmt --all`: format Rust code.
-- `cargo clippy -p openvcs-git-plugin --all-targets -- -D warnings`: lint (adjust `-D warnings` if needed).
-- `cargo test -p openvcs-git-plugin`: run tests (add tests as functionality grows).
+- `cargo clippy --bin openvcs-git-plugin --all-targets -- -D warnings`: lint (adjust `-D warnings` if needed).
+- `cargo test`: run tests (add tests as functionality grows).
 
 ## Coding Style & Naming Conventions
 - Rust edition is `2024`; use `rustfmt`-standard formatting (4-space indentation).
