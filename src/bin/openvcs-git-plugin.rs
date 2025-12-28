@@ -1,21 +1,16 @@
 use openvcs_core::models::{ConflictSide, FetchOptions, LogQuery, VcsEvent};
-use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest};
-use openvcs_core::plugin_stdio::{
-    PluginError, ok, ok_null, parse_json_params, receive_message, respond_shared, send_message_shared,
-};
+use openvcs_core::plugin_protocol::PluginMessage;
+use openvcs_core::plugin_protocol::RpcRequest;
+use openvcs_core::plugin_runtime::{PluginCtx, run_stdio_plugin};
+use openvcs_core::plugin_stdio::{PluginError, ok, ok_null, parse_json_params, send_message_shared};
 use openvcs_core::{models::BranchKind, OnEvent, Vcs, VcsError};
 #[cfg(feature = "libgit2")]
 use openvcs_plugin_git::GitLibGit2;
 #[cfg(feature = "system-git")]
 use openvcs_plugin_git::GitSystem;
 use serde_json::json;
-use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
-const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);
-
+use std::sync::Arc;
 fn to_plugin_error<E: std::fmt::Display>(err: E) -> PluginError {
     PluginError::message(err.to_string())
 }
@@ -74,28 +69,6 @@ fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
         })
 }
 
-fn next_request(
-    queue: &Arc<Mutex<std::collections::VecDeque<RpcRequest>>>,
-    stdin: &Arc<Mutex<BufReader<io::Stdin>>>,
-) -> Option<RpcRequest> {
-    if let Ok(mut q) = queue.lock() {
-        if let Some(req) = q.pop_front() {
-            return Some(req);
-        }
-    }
-
-    loop {
-        let msg = {
-            let mut lock = stdin.lock().ok()?;
-            receive_message(&mut *lock)?
-        };
-        match msg {
-            PluginMessage::Request(req) => return Some(req),
-            PluginMessage::Response(_) | PluginMessage::Event { .. } => continue,
-        }
-    }
-}
-
 fn main() {
     let backend_kind = match parse_backend_kind() {
         Ok(k) => k,
@@ -105,28 +78,10 @@ fn main() {
         }
     };
 
-    #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-    let next_id = 1u64 << 63;
-
-    #[cfg(not(all(feature = "system-git", target_arch = "wasm32")))]
-    let next_id = 1u64;
-
     let mut repo: Option<Box<dyn Vcs>> = None;
 
-    openvcs_core::host::init_stdio_default(next_id, HOST_CALL_TIMEOUT);
-
-    let stdout = Arc::clone(openvcs_core::host::stdout().unwrap());
-    let stdin = Arc::clone(openvcs_core::host::stdin().unwrap());
-    let queue = Arc::clone(openvcs_core::host::queue().unwrap());
-
-    // `openvcs_core::host` now owns the stdio/queue/ids plumbing; plugins only call init.
-
-    loop {
-        let Some(req) = next_request(&queue, &stdin) else {
-            break;
-        };
-
-        let out = Arc::clone(&stdout);
+    let run_res = run_stdio_plugin(|ctx: &mut PluginCtx, req: RpcRequest| {
+        let out = ctx.stdout();
         let on: OnEvent = Arc::new(move |evt: VcsEvent| {
             send_message_shared(&out, &PluginMessage::Event { event: evt });
         });
@@ -671,7 +626,11 @@ fn main() {
                 }
             }
         })();
+        res
+    });
 
-        respond_shared(&stdout, req.id, res);
+    if let Err(e) = run_res {
+        eprintln!("openvcs-git-plugin: {e}");
+        std::process::exit(1);
     }
 }
