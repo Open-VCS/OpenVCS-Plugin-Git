@@ -51,10 +51,21 @@ pub mod host_process {
         })?;
 
         Ok(ProcessExecOutput {
-            success: res.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+            success: res
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             status: res.get("status").and_then(|v| v.as_i64()).unwrap_or(-1) as i32,
-            stdout: res.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            stderr: res.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            stdout: res
+                .get("stdout")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            stderr: res
+                .get("stderr")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         })
     }
 }
@@ -65,11 +76,12 @@ pub mod host_workspace {
     use serde_json::json;
 
     pub fn read(path: &str) -> Result<Vec<u8>, String> {
-        let res = openvcs_core::host::call("workspace.readFile", json!({ "path": path }))
-            .map_err(|e: PluginError| {
+        let res = openvcs_core::host::call("workspace.readFile", json!({ "path": path })).map_err(
+            |e: PluginError| {
                 let code = e.code.unwrap_or_else(|| "host.error".into());
                 format!("{code}: {}", e.message)
-            })?;
+            },
+        )?;
         Ok(res.as_str().unwrap_or("").as_bytes().to_vec())
     }
 

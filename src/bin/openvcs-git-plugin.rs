@@ -1,11 +1,13 @@
+#[cfg(target_arch = "wasm32")]
+use openvcs_core::events;
 use openvcs_core::models::{ConflictSide, FetchOptions, LogQuery, VcsEvent};
 use openvcs_core::plugin_protocol::PluginMessage;
 use openvcs_core::plugin_protocol::RpcRequest;
 use openvcs_core::plugin_runtime::{PluginCtx, register_delegate, run_registered};
-use openvcs_core::plugin_stdio::{PluginError, err_display, ok, ok_null, parse_json_params, send_message_shared};
-#[cfg(target_arch = "wasm32")]
-use openvcs_core::events;
-use openvcs_core::{models::BranchKind, OnEvent, Vcs, VcsError};
+use openvcs_core::plugin_stdio::{
+    PluginError, err_display, ok, ok_null, parse_json_params, send_message_shared,
+};
+use openvcs_core::{OnEvent, Vcs, VcsError, models::BranchKind};
 #[cfg(feature = "libgit2")]
 use openvcs_plugin_git::GitLibGit2;
 #[cfg(feature = "system-git")]
@@ -83,9 +85,9 @@ fn on_event_sink(ctx: &mut PluginCtx) -> OnEvent {
 }
 
 fn repo_required<'a>(s: &'a State) -> Result<&'a Box<dyn Vcs>, PluginError> {
-    s.repo.as_ref().ok_or_else(|| {
-        PluginError::message("repo is not open (call 'open' or 'clone' first)")
-    })
+    s.repo
+        .as_ref()
+        .ok_or_else(|| PluginError::message("repo is not open (call 'open' or 'clone' first)"))
 }
 
 fn dispatch_repo_rpc(
@@ -98,7 +100,9 @@ fn dispatch_repo_rpc(
     let repo = repo_required(&s)?;
 
     match method {
-        "workdir" => Ok(json!(require_utf8_path(repo.workdir()).map_err(err_display)?)),
+        "workdir" => Ok(json!(
+            require_utf8_path(repo.workdir()).map_err(err_display)?
+        )),
         "current_branch" => Ok(json!(repo.current_branch().map_err(err_display)?)),
         "branches" => Ok(json!(repo.branches().map_err(err_display)?)),
         "local_branches" => {
@@ -118,7 +122,8 @@ fn dispatch_repo_rpc(
                 checkout: bool,
             }
             let p: P = parse_json_params(params).map_err(PluginError::message)?;
-            repo.create_branch(&p.name, p.checkout).map_err(err_display)?;
+            repo.create_branch(&p.name, p.checkout)
+                .map_err(err_display)?;
             ok_null()
         }
         "checkout_branch" => {
@@ -184,7 +189,10 @@ fn dispatch_repo_rpc(
                 .map_err(err_display)?;
             #[cfg(target_arch = "wasm32")]
             {
-                let _ = events::emit("repo.pushed", json!({ "remote": p.remote, "refspec": p.refspec }));
+                let _ = events::emit(
+                    "repo.pushed",
+                    json!({ "remote": p.remote, "refspec": p.refspec }),
+                );
             }
             ok_null()
         }
@@ -394,7 +402,8 @@ fn dispatch_repo_rpc(
                 email: String,
             }
             let p: P = parse_json_params(params).map_err(PluginError::message)?;
-            repo.set_identity_local(&p.name, &p.email).map_err(err_display)?;
+            repo.set_identity_local(&p.name, &p.email)
+                .map_err(err_display)?;
             ok_null()
         }
         "stash_list" => Ok(json!(repo.stash_list().map_err(err_display)?)),
@@ -484,7 +493,10 @@ fn dispatch_repo_rpc(
                 path: String,
             }
             let p: P = parse_json_params(params).map_err(PluginError::message)?;
-            Ok(json!(repo.lfs_is_tracked(Path::new(&p.path)).map_err(err_display)?))
+            Ok(json!(
+                repo.lfs_is_tracked(Path::new(&p.path))
+                    .map_err(err_display)?
+            ))
         }
         "cherry_pick" => {
             #[derive(serde::Deserialize)]
@@ -511,7 +523,10 @@ fn dispatch_repo_rpc(
 
 macro_rules! define_repo_rpc {
     ($fn_name:ident, $method:literal) => {
-        fn $fn_name(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+        fn $fn_name(
+            ctx: &mut PluginCtx,
+            req: RpcRequest,
+        ) -> Result<serde_json::Value, PluginError> {
             dispatch_repo_rpc(ctx, $method, req.params)
         }
     };
@@ -665,10 +680,15 @@ fn clone_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
 fn workdir_rpc(_ctx: &mut PluginCtx, _req: RpcRequest) -> Result<serde_json::Value, PluginError> {
     let s = state()?;
     let repo = repo_required(&s)?;
-    Ok(json!(require_utf8_path(repo.workdir()).map_err(err_display)?))
+    Ok(json!(
+        require_utf8_path(repo.workdir()).map_err(err_display)?
+    ))
 }
 
-fn current_branch_rpc(_ctx: &mut PluginCtx, _req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn current_branch_rpc(
+    _ctx: &mut PluginCtx,
+    _req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     let s = state()?;
     let repo = repo_required(&s)?;
     Ok(json!(repo.current_branch().map_err(err_display)?))
@@ -680,7 +700,10 @@ fn branches_rpc(_ctx: &mut PluginCtx, _req: RpcRequest) -> Result<serde_json::Va
     Ok(json!(repo.branches().map_err(err_display)?))
 }
 
-fn local_branches_rpc(_ctx: &mut PluginCtx, _req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn local_branches_rpc(
+    _ctx: &mut PluginCtx,
+    _req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     let s = state()?;
     let repo = repo_required(&s)?;
     let locals: Vec<String> = repo
@@ -755,7 +778,6 @@ fn main() {
             std::process::exit(2);
         }
     };
-
 
     let _ = STATE.set(Mutex::new(State {
         backend_kind,

@@ -146,11 +146,12 @@ impl GitSystem {
                 ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
                 ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
             ];
-            let host_out = crate::host_process::exec(cwd, &argv, &env, None)
-                .map_err(|e| VcsError::Backend {
+            let host_out = crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| {
+                VcsError::Backend {
                     backend: GIT_SYSTEM_ID,
                     msg: e,
-                })?;
+                }
+            })?;
             if host_out.success {
                 log::trace!(
                     "git(run): exit={}, stdout_bytes={}, stderr_bytes={}",
@@ -249,12 +250,16 @@ impl GitSystem {
             ];
             let out = crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| {
                 VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg: e,
+                    backend: GIT_SYSTEM_ID,
+                    msg: e,
                 }
             })?;
             if out.success {
-                log::trace!("git(capture): exit={}, stdout_bytes={}", out.status, out.stdout.len());
+                log::trace!(
+                    "git(capture): exit={}, stdout_bytes={}",
+                    out.status,
+                    out.stdout.len()
+                );
                 return Ok(out.stdout);
             }
             return Err(VcsError::Backend {
@@ -363,9 +368,11 @@ impl GitSystem {
                 ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
                 ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
             ];
-            let out = crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg: e,
+            let out = crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| {
+                VcsError::Backend {
+                    backend: GIT_SYSTEM_ID,
+                    msg: e,
+                }
             })?;
             log::trace!(
                 "git(capture-any): exit={}, stdout_bytes={}",
@@ -409,9 +416,11 @@ impl GitSystem {
                 ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
                 ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
             ];
-            let out = crate::host_process::exec(cwd, &argv, &env, Some(input)).map_err(|e| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg: e,
+            let out = crate::host_process::exec(cwd, &argv, &env, Some(input)).map_err(|e| {
+                VcsError::Backend {
+                    backend: GIT_SYSTEM_ID,
+                    msg: e,
+                }
             })?;
             if out.success {
                 return Ok(());
@@ -477,9 +486,11 @@ impl GitSystem {
                 ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
                 ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
             ];
-            let out = crate::host_process::exec(Some(cwd), &argv, &env, None).map_err(|e| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg: e,
+            let out = crate::host_process::exec(Some(cwd), &argv, &env, None).map_err(|e| {
+                VcsError::Backend {
+                    backend: GIT_SYSTEM_ID,
+                    msg: e,
+                }
             })?;
             if !out.stderr.trim().is_empty() {
                 if let Some(cb) = &on {
