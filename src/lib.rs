@@ -11,36 +11,36 @@ mod libgit2;
 pub use libgit2::GitLibGit2;
 
 #[cfg(feature = "system-git")]
-pub mod host_exec {
+pub mod host_process {
     use std::path::Path;
     use std::sync::{Arc, OnceLock};
 
     #[derive(Debug, Clone)]
-    pub struct HostExecOutput {
+    pub struct ProcessExecOutput {
         pub success: bool,
         pub status: i32,
         pub stdout: String,
         pub stderr: String,
     }
 
-    pub type HostExecFn = dyn Fn(
+    pub type ProcessExecFn = dyn Fn(
             Option<&Path>,
             &[String],
             &[(String, String)],
             Option<&str>,
-        ) -> Result<HostExecOutput, String>
+        ) -> Result<ProcessExecOutput, String>
         + Send
         + Sync
         + 'static;
 
-    static HOST_EXEC: OnceLock<Arc<HostExecFn>> = OnceLock::new();
+    static PROCESS_EXEC: OnceLock<Arc<ProcessExecFn>> = OnceLock::new();
 
-    pub fn set_host_exec(f: Arc<HostExecFn>) {
-        let _ = HOST_EXEC.set(f);
+    pub fn set_process_exec(f: Arc<ProcessExecFn>) {
+        let _ = PROCESS_EXEC.set(f);
     }
 
-    pub fn get_host_exec() -> Option<&'static Arc<HostExecFn>> {
-        HOST_EXEC.get()
+    pub fn get_process_exec() -> Option<&'static Arc<ProcessExecFn>> {
+        PROCESS_EXEC.get()
     }
 }
 

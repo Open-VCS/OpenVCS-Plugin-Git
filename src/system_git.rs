@@ -142,7 +142,7 @@ impl GitSystem {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let exec = crate::host_exec::get_host_exec().ok_or_else(|| VcsError::Backend {
+            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: "missing host exec bridge (process.exec)".to_string(),
             })?;
@@ -247,7 +247,7 @@ impl GitSystem {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let exec = crate::host_exec::get_host_exec().ok_or_else(|| VcsError::Backend {
+            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: "missing host exec bridge (process.exec)".to_string(),
             })?;
@@ -365,7 +365,7 @@ impl GitSystem {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let exec = crate::host_exec::get_host_exec().ok_or_else(|| VcsError::Backend {
+            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: "missing host exec bridge (process.exec)".to_string(),
             })?;
@@ -415,7 +415,7 @@ impl GitSystem {
         #[cfg(target_arch = "wasm32")]
         {
             let argv: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
-            let exec = crate::host_exec::get_host_exec().ok_or_else(|| VcsError::Backend {
+            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: "missing host exec bridge (process.exec)".to_string(),
             })?;
@@ -486,7 +486,7 @@ impl GitSystem {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let exec = crate::host_exec::get_host_exec().ok_or_else(|| VcsError::Backend {
+            let exec = crate::host_process::get_process_exec().ok_or_else(|| VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: "missing host exec bridge (process.exec)".to_string(),
             })?;

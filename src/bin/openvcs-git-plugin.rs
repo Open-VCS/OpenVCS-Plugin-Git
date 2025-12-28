@@ -1,17 +1,17 @@
 use openvcs_core::models::{ConflictSide, FetchOptions, LogQuery, VcsEvent};
 use openvcs_core::plugin_protocol::{PluginMessage, RpcRequest};
 use openvcs_core::plugin_stdio::{
-    PluginError, parse_json_params, read_message, respond_shared, write_message_shared,
+    PluginError, parse_json_params, receive_message, respond_shared, send_message_shared,
 };
 #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-use openvcs_core::plugin_stdio::{AsyncHostCallState, host_call_blocking};
+use openvcs_core::plugin_stdio::{RequestIdState, call_host};
 use openvcs_core::{OnEvent, Vcs, VcsError, models::BranchKind};
 #[cfg(feature = "libgit2")]
 use openvcs_plugin_git::GitLibGit2;
 #[cfg(feature = "system-git")]
 use openvcs_plugin_git::GitSystem;
 #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-use openvcs_plugin_git::host_exec::{HostExecOutput, set_host_exec};
+use openvcs_plugin_git::host_process::{ProcessExecOutput, set_process_exec};
 #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
 use openvcs_plugin_git::host_workspace;
 use serde_json::json;
@@ -101,7 +101,7 @@ fn main() {
     let mut repo: Option<Box<dyn Vcs>> = None;
 
     #[cfg(all(feature = "system-git", target_arch = "wasm32"))]
-    let pending: Arc<Mutex<AsyncHostCallState>> = Arc::new(Mutex::new(AsyncHostCallState {
+    let pending: Arc<Mutex<RequestIdState>> = Arc::new(Mutex::new(RequestIdState {
         // Reserve low ids for host->plugin calls.
         next_id: 1u64 << 63,
     }));
@@ -112,12 +112,12 @@ fn main() {
         let stdin_exec = Arc::clone(&stdin);
         let queue_exec = Arc::clone(&queue);
         let pending_exec = Arc::clone(&pending);
-        set_host_exec(Arc::new(move |cwd, args, env, stdin_text| {
+        set_process_exec(Arc::new(move |cwd, args, env, stdin_text| {
             let env_obj = env
                 .iter()
                 .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                 .collect::<serde_json::Map<_, _>>();
-            let res = host_call_blocking(
+            let res = call_host(
                 &out_exec,
                 &stdin_exec,
                 &queue_exec,
@@ -136,7 +136,7 @@ fn main() {
                 let code = e.code.unwrap_or_else(|| "host.error".into());
                 format!("{code}: {}", e.message)
             })?;
-            Ok(HostExecOutput {
+            Ok(ProcessExecOutput {
                 success: res.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
                 status: res.get("status").and_then(|v| v.as_i64()).unwrap_or(-1) as i32,
                 stdout: res.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -149,7 +149,7 @@ fn main() {
         let queue_read = Arc::clone(&queue);
         let pending_read = Arc::clone(&pending);
         host_workspace::set_read(Arc::new(move |path: &str| {
-            let res = host_call_blocking(
+            let res = call_host(
                 &out_read,
                 &stdin_read,
                 &queue_read,
@@ -171,7 +171,7 @@ fn main() {
         let pending_write = Arc::clone(&pending);
         host_workspace::set_write(Arc::new(move |path: &str, bytes: &[u8]| {
             let content = String::from_utf8_lossy(bytes).to_string();
-            let _ = host_call_blocking(
+            let _ = call_host(
                 &out_write,
                 &stdin_write,
                 &queue_write,
@@ -200,7 +200,7 @@ fn main() {
         } else {
             let msg = {
                 let mut lock = stdin.lock().unwrap();
-                match read_message(&mut *lock) {
+                match receive_message(&mut *lock) {
                     Some(m) => m,
                     None => break,
                 }
@@ -213,7 +213,7 @@ fn main() {
 
         let out = Arc::clone(&stdout);
         let on: OnEvent = Arc::new(move |evt: VcsEvent| {
-            write_message_shared(&out, &PluginMessage::Event { event: evt });
+            send_message_shared(&out, &PluginMessage::Event { event: evt });
         });
 
         let method = req.method.as_str();
