@@ -1067,7 +1067,10 @@ impl Vcs for GitSystem {
     }
 
     fn status_summary(&self) -> Result<StatusSummary> {
-        let out = Self::run_git_capture(Some(&self.workdir), ["status", "--porcelain=v2"])?;
+        let out = Self::run_git_capture(
+            Some(&self.workdir),
+            ["status", "--porcelain=v2", "--untracked-files=all"],
+        )?;
         let mut s = StatusSummary::default();
         for line in out.lines() {
             if line.starts_with("? ") {
@@ -1206,7 +1209,10 @@ impl Vcs for GitSystem {
         }
 
         // Per-file changes via porcelain v2
-        let out = Self::run_git_capture(Some(&self.workdir), ["status", "--porcelain=v2"])?;
+        let out = Self::run_git_capture(
+            Some(&self.workdir),
+            ["status", "--porcelain=v2", "--untracked-files=all"],
+        )?;
         let (mut files, conflicted_paths) = parse(&self.workdir, &out);
 
         // If Git has already resolved the working tree for a conflict (e.g. external tool / other client),
@@ -1226,8 +1232,10 @@ impl Vcs for GitSystem {
                 }
             }
             if did_stage_any {
-                let out2 =
-                    Self::run_git_capture(Some(&self.workdir), ["status", "--porcelain=v2"])?;
+                let out2 = Self::run_git_capture(
+                    Some(&self.workdir),
+                    ["status", "--porcelain=v2", "--untracked-files=all"],
+                )?;
                 (files, _) = parse(&self.workdir, &out2);
                 if !auto_resolved.is_empty() {
                     for f in &mut files {
