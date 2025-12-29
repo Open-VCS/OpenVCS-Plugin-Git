@@ -906,7 +906,7 @@ impl Git {
                 );
 
                 let delta = e.head_to_index().or_else(|| e.index_to_workdir());
-                let (path, old_path) = if let Some(d) = delta {
+                let (mut path, old_path) = if let Some(d) = delta {
                     let newp = d.new_file().path().map(|p| p.to_string_lossy().to_string());
                     let oldp = d.old_file().path().map(|p| p.to_string_lossy().to_string());
                     let old_path = match (&oldp, &newp, &code[..]) {
@@ -917,6 +917,13 @@ impl Git {
                 } else {
                     (String::new(), None)
                 };
+
+                if path.is_empty() {
+                    path = e
+                        .path()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                }
 
                 files.push(FileEntry {
                     path,
