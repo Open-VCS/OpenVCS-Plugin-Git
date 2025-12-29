@@ -1,6 +1,7 @@
 {
   "id": "openvcs.git",
   "name": "Git Backends",
+  "author": "OpenVCS Team",
   "category": "backend",
   "description": "Provides Git backends (system git and libgit2) as an OpenVCS plugin.",
   "version": "0.1.0",
