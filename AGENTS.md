@@ -20,6 +20,14 @@ Run from the `OpenVCS-Client` workspace root (recommended):
 - `cargo clippy --bin openvcs-git-plugin --all-targets -- -D warnings`: lint (adjust `-D warnings` if needed).
 - `cargo test`: run tests (add tests as functionality grows).
 
+To build the distributable plugin bundle (recommended): use the OpenVCS SDK:
+
+```
+cargo openvcs dist
+```
+
+This produces a `.ovcsp` plugin file (the packaged plugin archive) in the `dist/` directory.
+
 ## Coding Style & Naming Conventions
 - Rust edition is `2024`; use `rustfmt`-standard formatting (4-space indentation).
 - Naming: `snake_case` for functions/vars, `PascalCase` for types, `SCREAMING_SNAKE_CASE` for constants.
