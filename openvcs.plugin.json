@@ -6,6 +6,7 @@
   "description": "Provides Git backends (system git and libgit2) as an OpenVCS plugin.",
   "version": "0.1.0",
   "default_enabled": true,
+  "entry": "entry.js",
   "capabilities": ["ui.notifications", "process.exec", "workspace.write"],
   "backend": {
     "exec": "openvcs-git-plugin.wasm",
