@@ -39,6 +39,9 @@ This produces a `.ovcsp` plugin file (the packaged plugin archive) in the `dist/
 
 ## Commit & Pull Request Guidelines
 - Git history is minimal; use short, imperative summaries (e.g., “Fix clone progress parsing”).
+- Commit message format: agents must format commit messages with a short
+  title of at most 72 characters, followed by a blank line and any
+  additional explanatory text in the body.
 - PRs should include: what backend is affected (`git-system` vs `git-libgit2`), reproduction steps, and any platform assumptions (SSH/auth, filesystem paths).
 
 - Before committing changes, run `just fix` to auto-apply formatting and lint fixes.
