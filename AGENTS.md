@@ -41,6 +41,9 @@ This produces a `.ovcsp` plugin file (the packaged plugin archive) in the `dist/
 - Git history is minimal; use short, imperative summaries (e.g., “Fix clone progress parsing”).
 - PRs should include: what backend is affected (`git-system` vs `git-libgit2`), reproduction steps, and any platform assumptions (SSH/auth, filesystem paths).
 
+- Before committing changes, run `just fix` to auto-apply formatting and lint fixes.
+- Commit edits locally using a clear, conventional commit message, but do NOT push changes to any remote; leave push/PR creation to a human maintainer.
+
 ## Security & Configuration Tips
 - Avoid logging secrets; this plugin exchanges JSON messages over stdio.
 - SSH behavior may be influenced by `OPENVCS_SSH_MODE` / `OPENVCS_SSH` (see `src/openvcs-git/src/lib.rs`).
