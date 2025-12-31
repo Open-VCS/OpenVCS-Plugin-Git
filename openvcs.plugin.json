@@ -8,9 +8,9 @@
   "default_enabled": true,
   "entry": "entry.js",
   "capabilities": ["ui.notifications", "process.exec", "workspace.write"],
-  "backend": {
+  "module": {
     "exec": "openvcs-git-plugin.wasm",
-    "provides": [
+    "vcs_backends": [
       { "id": "git-system", "name": "System" },
       { "id": "git-libgit2", "name": "Libgit2" }
     ]
