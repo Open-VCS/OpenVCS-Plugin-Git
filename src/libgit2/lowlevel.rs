@@ -919,10 +919,7 @@ impl Git {
                 };
 
                 if path.is_empty() {
-                    path = e
-                        .path()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                    path = e.path().map(|p| p.to_string()).unwrap_or_default();
                 }
 
                 files.push(FileEntry {

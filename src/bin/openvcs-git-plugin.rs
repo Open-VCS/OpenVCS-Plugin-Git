@@ -84,9 +84,9 @@ fn on_event_sink(ctx: &mut PluginCtx) -> OnEvent {
     })
 }
 
-fn repo_required<'a>(s: &'a State) -> Result<&'a Box<dyn Vcs>, PluginError> {
+fn repo_required(s: &State) -> Result<&dyn Vcs, PluginError> {
     s.repo
-        .as_ref()
+        .as_deref()
         .ok_or_else(|| PluginError::message("repo is not open (call 'open' or 'clone' first)"))
 }
 
