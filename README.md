@@ -9,6 +9,8 @@ This directory is the OpenVCS plugin bundle for Git.
 
 To build the plugin executable in dev: `cargo build --bin openvcs-git-plugin`
 
+Formatting requirement (Rust): `cargo fmt --all` (CI enforces `cargo fmt --all -- --check`).
+
 To build the distributable plugin bundle (recommended): use the OpenVCS SDK:
 
 ```
