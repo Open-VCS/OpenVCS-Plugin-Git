@@ -47,6 +47,8 @@ This produces a `.ovcsp` plugin file (the packaged plugin archive) in the `dist/
 - Before committing changes, run `just fix` to auto-apply formatting and lint fixes.
 - Commit edits locally using a clear, conventional commit message, but do NOT push changes to any remote; leave push/PR creation to a human maintainer.
 
+**Sandbox note**: Running `just fix` and some `cargo` commands (for example `cargo build`, `cargo test`, or commands that fetch dependencies or build native binaries) may require network access or host-level tooling and therefore should be run outside a restricted sandbox or container. If you are operating with sandboxing or restricted network access, request approval before executing these commands or run them on the host machine.
+
 ## Security & Configuration Tips
 - Avoid logging secrets; this plugin exchanges JSON messages over stdio.
 - SSH behavior may be influenced by `OPENVCS_SSH_MODE` / `OPENVCS_SSH` (see `src/openvcs-git/src/lib.rs`).
