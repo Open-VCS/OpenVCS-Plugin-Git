@@ -1,3 +1,2 @@
-[alias]
-# Builds and bundles this plugin into `dist/*.ovcsp` using the OpenVCS SDK.
-dist = "run --manifest-path ../OpenVCS-SDK/Cargo.toml --bin openvcs-plugin -- --plugin-dir . --out dist"
+[build]
+target = "wasm32-wasip1"
