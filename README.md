@@ -1,16 +1,16 @@
 This directory contains the built-in Git plugin bundle for OpenVCS: the plugin
-manifest plus the Rust crates and executable that implement Git backends.
+manifest plus the Rust crates and WASI module that implement Git backends.
 
 **Quick Links**
 - Plugin manifest: `openvcs.plugin.json`:1
-- Plugin executable crate: `src/openvcs-git-plugin/`:1
-- System-git backend: `src/openvcs-git/`:1
-- libgit2 backend (optional): `src/openvcs-git-libgit2/`:1
+- Plugin module entry: `src/bin/openvcs-git-plugin.rs`:1
+- System-git backend: `src/system_git.rs`:1
+- libgit2 backend (optional): `src/libgit2/`:1
 
 **Purpose**
-- Provide an `openvcs-git-plugin` executable that implements the OpenVCS
-  plugin protocol over `stdin`/`stdout` and exposes Git-backed repository
-  operations to the OpenVCS host.
+- Provide an `openvcs-git-plugin` WASI module (`.wasm`) that implements the
+  OpenVCS plugin protocol over `stdin`/`stdout` and exposes Git-backed
+  repository operations to the OpenVCS host.
 
 **Prerequisites**
 - Rust toolchain (recommended via `rustup`) targeting the repository's
@@ -19,13 +19,16 @@ manifest plus the Rust crates and executable that implement Git backends.
   library and headers installed (platform-specific).
 
 **Build (development)**
-- Build the plugin binary: `cargo build --bin openvcs-git-plugin`
-- Build with the `libgit2` backend: `cargo build --bin openvcs-git-plugin --features libgit2`
-- Release build: `cargo build --bin openvcs-git-plugin --release`
+- Build the WASI module: `cargo build --target wasm32-wasip1 --bin openvcs-git-plugin`
+- Build with the `libgit2` backend: `cargo build --target wasm32-wasip1 --bin openvcs-git-plugin --features libgit2`
+- Release build: `cargo build --target wasm32-wasip1 --bin openvcs-git-plugin --release`
+- If `wasm32-wasip1` is unavailable, use `--target wasm32-wasi`.
 
-At runtime OpenVCS locates the plugin executable in either:
-- Packaged install: `Backend/built-in-plugins/openvcs.git/bin/openvcs-git-plugin`:1
-- Development fallback: `target/{debug|release}/openvcs-git-plugin`:1
+At runtime OpenVCS locates the plugin module in either:
+- Packaged install: `Backend/built-in-plugins/openvcs.git/bin/openvcs-git-plugin.wasm`:1
+- Development fallback: `target/wasm32-wasip1/{debug|release}/openvcs-git-plugin.wasm`:1
+
+OpenVCS loads WASM modules only; native binaries are rejected.
 
 **Build (distribution)**
 - Use the OpenVCS SDK to create a distributable plugin archive:
@@ -47,10 +50,9 @@ At runtime OpenVCS locates the plugin executable in either:
   testing guidelines).
 
 **Development Notes**
-- Keep protocol/IO code in `src/openvcs-git-plugin/` and backend logic in the
-  backend crates (`src/openvcs-git/` and `src/openvcs-git-libgit2/`).
-- For libgit2, low-level logic lives in
-  `src/openvcs-git-libgit2/src/lowlevel.rs`:1
+- Keep protocol/IO code in `src/bin/openvcs-git-plugin.rs` and backend logic in
+  `src/system_git.rs` and `src/libgit2/`.
+- For libgit2, low-level logic lives in `src/libgit2/lowlevel.rs`:1
 - Avoid logging secrets — the plugin exchanges JSON messages over stdio.
 
 **Contributing**
