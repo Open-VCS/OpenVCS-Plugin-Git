@@ -64,7 +64,7 @@ impl GitLibGit2 {
             if let Some(rest) = s.strip_prefix("remote: ") {
                 debug!("[remote]: {rest}");
                 if let Some(cb) = &on {
-                    cb(VcsEvent::RemoteMessage(s));
+                    cb(VcsEvent::RemoteMessage { msg: s });
                 }
                 return;
             }
