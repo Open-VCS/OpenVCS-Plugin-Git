@@ -62,9 +62,6 @@ jobs:
         with:
           workspaces: OpenVCS-Plugin-Git
 
-      - name: Install wasmtime
-        uses: bytecodealliance/setup-wasmtime@d26a662b2a46d68491f0896f8b492b4f1f8a1c5a # v1.2.0
-
       - name: Cargo fmt (check)
         working-directory: OpenVCS-Plugin-Git
         run: cargo fmt --all -- --check
