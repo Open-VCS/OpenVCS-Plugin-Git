@@ -3,6 +3,10 @@ name = "openvcs-plugin-git"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+test = false
+doctest = false
+
 [features]
 default = ["system-git"]
 system-git = []
@@ -22,3 +26,5 @@ time = { version = "0.3", features = ["parsing", "formatting"], optional = true 
 [[bin]]
 name = "openvcs-git-plugin"
 path = "src/bin/openvcs-git-plugin.rs"
+test = false
+doctest = false
