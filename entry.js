@@ -131,7 +131,7 @@ try {
     const git_backend = String(cfg?.git?.backend || 'system');
     const lfs = cfg?.lfs || null;
     return window.OpenVCS?.invoke?.('call_vcs_backend_method', {
-      backend_id: 'git',
+      backendId: 'git',
       method,
       params: { path, git_backend, lfs, ...(extra || {}) },
     });
