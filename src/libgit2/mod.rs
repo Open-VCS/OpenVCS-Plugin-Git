@@ -507,16 +507,5 @@ impl Vcs for GitLibGit2 {
         Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
     }
 
-    fn lfs_fetch(&self) -> Result<()> {
-        Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
-    }
-    fn lfs_pull(&self) -> Result<()> {
-        Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
-    }
-    fn lfs_prune(&self) -> Result<()> {
-        Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
-    }
-    fn lfs_track(&self, _paths: &[PathBuf]) -> Result<()> {
-        Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
-    }
+    // Git LFS helpers are Git-specific and are intentionally not part of the generic VCS trait.
 }

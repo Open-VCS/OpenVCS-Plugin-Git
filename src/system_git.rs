@@ -1478,22 +1478,26 @@ impl Vcs for GitSystem {
         Ok(s.lines().map(|l| l.to_string()).collect())
     }
 
-    fn lfs_fetch(&self) -> Result<()> {
-        log::info!("git-system: lfs_fetch in {}", self.workdir.display());
+    // Git LFS helpers are Git-specific and are intentionally not part of the generic VCS trait.
+}
+
+impl GitSystem {
+    pub fn lfs_fetch_all(&self) -> Result<()> {
+        log::info!("git-system: lfs_fetch_all in {}", self.workdir.display());
         Self::run_git(Some(&self.workdir), ["lfs", "fetch", "--all"])
     }
 
-    fn lfs_pull(&self) -> Result<()> {
+    pub fn lfs_pull(&self) -> Result<()> {
         log::info!("git-system: lfs_pull in {}", self.workdir.display());
         Self::run_git(Some(&self.workdir), ["lfs", "pull"])
     }
 
-    fn lfs_prune(&self) -> Result<()> {
+    pub fn lfs_prune(&self) -> Result<()> {
         log::info!("git-system: lfs_prune in {}", self.workdir.display());
         Self::run_git(Some(&self.workdir), ["lfs", "prune"])
     }
 
-    fn lfs_track(&self, paths: &[PathBuf]) -> Result<()> {
+    pub fn lfs_track(&self, paths: &[PathBuf]) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
@@ -1509,7 +1513,7 @@ impl Vcs for GitSystem {
         Self::run_git(Some(&self.workdir), args)
     }
 
-    fn lfs_untrack(&self, paths: &[PathBuf]) -> Result<()> {
+    pub fn lfs_untrack(&self, paths: &[PathBuf]) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
@@ -1525,7 +1529,7 @@ impl Vcs for GitSystem {
         Self::run_git(Some(&self.workdir), args)
     }
 
-    fn lfs_is_tracked(&self, path: &Path) -> Result<bool> {
+    pub fn lfs_is_tracked(&self, path: &Path) -> Result<bool> {
         let p = Self::path_str(path)?;
         // `git check-attr` does not require git-lfs to be installed; it reads `.gitattributes`.
         // Output example: `path/to/file: filter: lfs`

@@ -455,49 +455,6 @@ fn dispatch_repo_rpc(
             let p: P = parse_json_params(params).map_err(PluginError::message)?;
             Ok(json!(repo.stash_show(&p.selector).map_err(err_display)?))
         }
-        "lfs_fetch" => {
-            repo.lfs_fetch().map_err(err_display)?;
-            ok_null()
-        }
-        "lfs_pull" => {
-            repo.lfs_pull().map_err(err_display)?;
-            ok_null()
-        }
-        "lfs_prune" => {
-            repo.lfs_prune().map_err(err_display)?;
-            ok_null()
-        }
-        "lfs_track" => {
-            #[derive(serde::Deserialize)]
-            struct P {
-                paths: Vec<String>,
-            }
-            let p: P = parse_json_params(params).map_err(PluginError::message)?;
-            let pb: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
-            repo.lfs_track(&pb).map_err(err_display)?;
-            ok_null()
-        }
-        "lfs_untrack" => {
-            #[derive(serde::Deserialize)]
-            struct P {
-                paths: Vec<String>,
-            }
-            let p: P = parse_json_params(params).map_err(PluginError::message)?;
-            let pb: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
-            repo.lfs_untrack(&pb).map_err(err_display)?;
-            ok_null()
-        }
-        "lfs_is_tracked" => {
-            #[derive(serde::Deserialize)]
-            struct P {
-                path: String,
-            }
-            let p: P = parse_json_params(params).map_err(PluginError::message)?;
-            Ok(json!(
-                repo.lfs_is_tracked(Path::new(&p.path))
-                    .map_err(err_display)?
-            ))
-        }
         "cherry_pick" => {
             #[derive(serde::Deserialize)]
             struct P {
@@ -572,14 +529,353 @@ define_repo_rpc!(stash_apply_rpc, "stash_apply");
 define_repo_rpc!(stash_pop_rpc, "stash_pop");
 define_repo_rpc!(stash_drop_rpc, "stash_drop");
 define_repo_rpc!(stash_show_rpc, "stash_show");
-define_repo_rpc!(lfs_fetch_rpc, "lfs_fetch");
-define_repo_rpc!(lfs_pull_rpc, "lfs_pull");
-define_repo_rpc!(lfs_prune_rpc, "lfs_prune");
-define_repo_rpc!(lfs_track_rpc, "lfs_track");
-define_repo_rpc!(lfs_untrack_rpc, "lfs_untrack");
-define_repo_rpc!(lfs_is_tracked_rpc, "lfs_is_tracked");
 define_repo_rpc!(cherry_pick_rpc, "cherry_pick");
 define_repo_rpc!(revert_commit_rpc, "revert_commit");
+
+fn lfs_backend_from_str(value: &str) -> Result<GitBackend, PluginError> {
+    match value.trim() {
+        "" | "system" => Ok(GitBackend::System),
+        "libgit2" => Ok(GitBackend::Libgit2),
+        other => Err(PluginError::message(format!(
+            "unknown git backend '{other}'"
+        ))),
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+struct LfsCfg {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    concurrency: u32,
+    #[serde(default)]
+    require_lock_before_edit: bool,
+    #[serde(default)]
+    background_fetch_on_checkout: bool,
+}
+
+impl Default for LfsCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            concurrency: 4,
+            require_lock_before_edit: false,
+            background_fetch_on_checkout: true,
+        }
+    }
+}
+
+struct EnvGuard {
+    originals: Vec<(&'static str, Option<String>)>,
+}
+
+impl EnvGuard {
+    fn capture(key: &'static str) -> Option<String> {
+        std::env::var(key).ok()
+    }
+
+    fn set(
+        key: &'static str,
+        value: Option<String>,
+        originals: &mut Vec<(&'static str, Option<String>)>,
+    ) {
+        originals.push((key, Self::capture(key)));
+        match value {
+            Some(v) => unsafe {
+                // Safety: the plugin process is effectively single-threaded, and we scope env
+                // overrides to a single RPC handler invocation to configure the child `git lfs`
+                // process.
+                std::env::set_var(key, v)
+            },
+            None => unsafe {
+                // Safety: see comment above.
+                std::env::remove_var(key)
+            },
+        }
+    }
+
+    fn apply_lfs(cfg: LfsCfg) -> Result<Self, PluginError> {
+        if !cfg.enabled {
+            return Err(PluginError::message("Git LFS integration is disabled"));
+        }
+
+        let mut originals = Vec::new();
+
+        let conc = cfg.concurrency.clamp(1, 16);
+        Self::set(
+            "GIT_LFS_CONCURRENCY",
+            Some(conc.to_string()),
+            &mut originals,
+        );
+
+        let lock_env = if cfg.require_lock_before_edit {
+            Some("1".to_string())
+        } else {
+            None
+        };
+        Self::set(
+            "GIT_LFS_SET_LOCKED_FILES_READONLY",
+            lock_env,
+            &mut originals,
+        );
+
+        let skip_smudge = if cfg.background_fetch_on_checkout {
+            None
+        } else {
+            Some("1".to_string())
+        };
+        Self::set("GIT_LFS_SKIP_SMUDGE", skip_smudge, &mut originals);
+
+        Ok(Self { originals })
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (key, val) in self.originals.drain(..).rev() {
+            if let Some(v) = val {
+                unsafe {
+                    // Safety: see EnvGuard::set.
+                    std::env::set_var(key, v);
+                }
+            } else {
+                unsafe {
+                    // Safety: see EnvGuard::set.
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+}
+
+fn git_lfs_fetch_all_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        #[serde(default)]
+        lfs: Option<LfsCfg>,
+    }
+    let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
+    let backend = lfs_backend_from_str(&p.git_backend)?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let _guard = EnvGuard::apply_lfs(p.lfs.unwrap_or_default())?;
+                let repo = GitSystem::open(&repo_path).map_err(err_display)?;
+                repo.lfs_fetch_all().map_err(err_display)?;
+                ok_null()
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(PluginError::message("system Git backend not compiled into plugin"))
+            }
+        }
+        GitBackend::Libgit2 => Err(PluginError::message(
+            "Git LFS is not supported by the libgit2 backend",
+        )),
+    }
+}
+
+fn git_lfs_pull_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        #[serde(default)]
+        lfs: Option<LfsCfg>,
+    }
+    let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
+    let backend = lfs_backend_from_str(&p.git_backend)?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let _guard = EnvGuard::apply_lfs(p.lfs.unwrap_or_default())?;
+                let repo = GitSystem::open(&repo_path).map_err(err_display)?;
+                repo.lfs_pull().map_err(err_display)?;
+                ok_null()
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(PluginError::message("system Git backend not compiled into plugin"))
+            }
+        }
+        GitBackend::Libgit2 => Err(PluginError::message(
+            "Git LFS is not supported by the libgit2 backend",
+        )),
+    }
+}
+
+fn git_lfs_prune_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        #[serde(default)]
+        lfs: Option<LfsCfg>,
+    }
+    let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
+    let backend = lfs_backend_from_str(&p.git_backend)?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let _guard = EnvGuard::apply_lfs(p.lfs.unwrap_or_default())?;
+                let repo = GitSystem::open(&repo_path).map_err(err_display)?;
+                repo.lfs_prune().map_err(err_display)?;
+                ok_null()
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(PluginError::message("system Git backend not compiled into plugin"))
+            }
+        }
+        GitBackend::Libgit2 => Err(PluginError::message(
+            "Git LFS is not supported by the libgit2 backend",
+        )),
+    }
+}
+
+fn git_lfs_track_paths_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        #[serde(default)]
+        lfs: Option<LfsCfg>,
+        #[serde(default)]
+        paths: Vec<String>,
+    }
+    let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
+    let backend = lfs_backend_from_str(&p.git_backend)?;
+    let repo_path = PathBuf::from(p.path);
+    let list: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let _guard = EnvGuard::apply_lfs(p.lfs.unwrap_or_default())?;
+                let repo = GitSystem::open(&repo_path).map_err(err_display)?;
+                repo.lfs_track(&list).map_err(err_display)?;
+                ok_null()
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(PluginError::message("system Git backend not compiled into plugin"))
+            }
+        }
+        GitBackend::Libgit2 => Err(PluginError::message(
+            "Git LFS is not supported by the libgit2 backend",
+        )),
+    }
+}
+
+fn git_lfs_untrack_paths_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        #[serde(default)]
+        lfs: Option<LfsCfg>,
+        #[serde(default)]
+        paths: Vec<String>,
+    }
+    let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
+    let backend = lfs_backend_from_str(&p.git_backend)?;
+    let repo_path = PathBuf::from(p.path);
+    let list: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let _guard = EnvGuard::apply_lfs(p.lfs.unwrap_or_default())?;
+                let repo = GitSystem::open(&repo_path).map_err(err_display)?;
+                repo.lfs_untrack(&list).map_err(err_display)?;
+                ok_null()
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(PluginError::message("system Git backend not compiled into plugin"))
+            }
+        }
+        GitBackend::Libgit2 => Err(PluginError::message(
+            "Git LFS is not supported by the libgit2 backend",
+        )),
+    }
+}
+
+fn git_lfs_is_tracked_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        file: String,
+    }
+    let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
+    let backend = lfs_backend_from_str(&p.git_backend)?;
+    let repo_path = PathBuf::from(p.path);
+    let file_path = PathBuf::from(p.file);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let repo = GitSystem::open(&repo_path).map_err(err_display)?;
+                ok(repo.lfs_is_tracked(&file_path).map_err(err_display)?)
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(PluginError::message("system Git backend not compiled into plugin"))
+            }
+        }
+        GitBackend::Libgit2 => ok(false),
+    }
+}
+
+fn git_lfs_tracked_paths_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        #[serde(default)]
+        paths: Vec<String>,
+    }
+    let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
+    let backend = lfs_backend_from_str(&p.git_backend)?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let repo = GitSystem::open(&repo_path).map_err(err_display)?;
+                let mut tracked = Vec::new();
+                for file in p.paths {
+                    let file_path = PathBuf::from(&file);
+                    if repo.lfs_is_tracked(&file_path).map_err(err_display)? {
+                        tracked.push(file);
+                    }
+                }
+                ok(tracked)
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(PluginError::message("system Git backend not compiled into plugin"))
+            }
+        }
+        GitBackend::Libgit2 => ok(Vec::<String>::new()),
+    }
+}
 fn open_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
@@ -862,14 +1158,16 @@ fn main() {
     register_delegate("stash_pop", stash_pop_rpc);
     register_delegate("stash_drop", stash_drop_rpc);
     register_delegate("stash_show", stash_show_rpc);
-    register_delegate("lfs_fetch", lfs_fetch_rpc);
-    register_delegate("lfs_pull", lfs_pull_rpc);
-    register_delegate("lfs_prune", lfs_prune_rpc);
-    register_delegate("lfs_track", lfs_track_rpc);
-    register_delegate("lfs_untrack", lfs_untrack_rpc);
-    register_delegate("lfs_is_tracked", lfs_is_tracked_rpc);
     register_delegate("cherry_pick", cherry_pick_rpc);
     register_delegate("revert_commit", revert_commit_rpc);
+
+    register_delegate("git.lfs.fetch_all", git_lfs_fetch_all_rpc);
+    register_delegate("git.lfs.pull", git_lfs_pull_rpc);
+    register_delegate("git.lfs.prune", git_lfs_prune_rpc);
+    register_delegate("git.lfs.track_paths", git_lfs_track_paths_rpc);
+    register_delegate("git.lfs.untrack_paths", git_lfs_untrack_paths_rpc);
+    register_delegate("git.lfs.is_tracked", git_lfs_is_tracked_rpc);
+    register_delegate("git.lfs.tracked_paths", git_lfs_tracked_paths_rpc);
 
     if let Err(e) = run_registered() {
         eprintln!("openvcs-git-plugin: {e}");
