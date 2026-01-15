@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
 struct State {
-    backend_kind: BackendKind,
+    git_backend: GitBackend,
     repo: Option<Box<dyn Vcs>>,
 }
 
@@ -42,8 +42,8 @@ fn workspace_opened(payload: serde_json::Value) -> Result<(), PluginError> {
     let path = PathBuf::from(payload.path);
 
     let mut s = state()?;
-    s.repo = Some(match s.backend_kind {
-        BackendKind::GitSystem => {
+    s.repo = Some(match s.git_backend {
+        GitBackend::System => {
             #[cfg(feature = "system-git")]
             {
                 Box::new(GitSystem::open(&path).map_err(err_display)?)
@@ -51,11 +51,11 @@ fn workspace_opened(payload: serde_json::Value) -> Result<(), PluginError> {
             #[cfg(not(feature = "system-git"))]
             {
                 return Err(PluginError::message(
-                    "git-system backend not compiled into plugin",
+                    "system Git backend not compiled into plugin",
                 ));
             }
         }
-        BackendKind::GitLibgit2 => {
+        GitBackend::Libgit2 => {
             #[cfg(feature = "libgit2")]
             {
                 Box::new(GitLibGit2::open(&path).map_err(err_display)?)
@@ -63,7 +63,7 @@ fn workspace_opened(payload: serde_json::Value) -> Result<(), PluginError> {
             #[cfg(not(feature = "libgit2"))]
             {
                 return Err(PluginError::message(
-                    "git-libgit2 backend not compiled into plugin",
+                    "libgit2 backend not compiled into plugin",
                 ));
             }
         }
@@ -74,7 +74,7 @@ fn workspace_opened(payload: serde_json::Value) -> Result<(), PluginError> {
 
 fn caps_rpc(_ctx: &mut PluginCtx, _req: RpcRequest) -> Result<serde_json::Value, PluginError> {
     let s = state()?;
-    ok(backend_caps(s.backend_kind))
+    ok(backend_caps(s.git_backend))
 }
 
 fn on_event_sink(ctx: &mut PluginCtx) -> OnEvent {
@@ -584,13 +584,16 @@ fn open_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
     #[derive(serde::Deserialize)]
     struct P {
         path: String,
+        #[serde(default)]
+        config: serde_json::Value,
     }
     let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
     let path = PathBuf::from(&p.path);
 
     let mut s = state()?;
-    s.repo = Some(match s.backend_kind {
-        BackendKind::GitSystem => {
+    s.git_backend = git_backend_from_config(&p.config)?;
+    s.repo = Some(match s.git_backend {
+        GitBackend::System => {
             #[cfg(feature = "system-git")]
             {
                 Box::new(GitSystem::open(&path).map_err(err_display)?)
@@ -598,11 +601,11 @@ fn open_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
             #[cfg(not(feature = "system-git"))]
             {
                 return Err(PluginError::message(
-                    "git-system backend not compiled into plugin",
+                    "system Git backend not compiled into plugin",
                 ));
             }
         }
-        BackendKind::GitLibgit2 => {
+        GitBackend::Libgit2 => {
             #[cfg(feature = "libgit2")]
             {
                 Box::new(GitLibGit2::open(&path).map_err(err_display)?)
@@ -610,7 +613,7 @@ fn open_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
             #[cfg(not(feature = "libgit2"))]
             {
                 return Err(PluginError::message(
-                    "git-libgit2 backend not compiled into plugin",
+                    "libgit2 backend not compiled into plugin",
                 ));
             }
         }
@@ -629,14 +632,17 @@ fn clone_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
     struct P {
         url: String,
         dest: String,
+        #[serde(default)]
+        config: serde_json::Value,
     }
     let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
     let dest = PathBuf::from(&p.dest);
     let on = on_event_sink(ctx);
 
     let mut s = state()?;
-    s.repo = Some(match s.backend_kind {
-        BackendKind::GitSystem => {
+    s.git_backend = git_backend_from_config(&p.config)?;
+    s.repo = Some(match s.git_backend {
+        GitBackend::System => {
             #[cfg(feature = "system-git")]
             {
                 Box::new(
@@ -646,11 +652,11 @@ fn clone_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
             #[cfg(not(feature = "system-git"))]
             {
                 return Err(PluginError::message(
-                    "git-system backend not compiled into plugin",
+                    "system Git backend not compiled into plugin",
                 ));
             }
         }
-        BackendKind::GitLibgit2 => {
+        GitBackend::Libgit2 => {
             #[cfg(feature = "libgit2")]
             {
                 Box::new(
@@ -660,7 +666,7 @@ fn clone_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
             #[cfg(not(feature = "libgit2"))]
             {
                 return Err(PluginError::message(
-                    "git-libgit2 backend not compiled into plugin",
+                    "libgit2 backend not compiled into plugin",
                 ));
             }
         }
@@ -717,15 +723,15 @@ fn local_branches_rpc(
 }
 
 #[derive(Debug, Clone, Copy)]
-enum BackendKind {
-    GitSystem,
-    GitLibgit2,
+enum GitBackend {
+    System,
+    Libgit2,
 }
 
-fn backend_caps(kind: BackendKind) -> openvcs_core::models::Capabilities {
+fn backend_caps(kind: GitBackend) -> openvcs_core::models::Capabilities {
     use openvcs_core::models::Capabilities;
     match kind {
-        BackendKind::GitSystem => Capabilities {
+        GitBackend::System => Capabilities {
             commits: true,
             branches: true,
             tags: true,
@@ -733,7 +739,7 @@ fn backend_caps(kind: BackendKind) -> openvcs_core::models::Capabilities {
             push_pull: true,
             fast_forward: true,
         },
-        BackendKind::GitLibgit2 => Capabilities {
+        GitBackend::Libgit2 => Capabilities {
             commits: true,
             branches: true,
             tags: true,
@@ -744,21 +750,41 @@ fn backend_caps(kind: BackendKind) -> openvcs_core::models::Capabilities {
     }
 }
 
-fn parse_backend_kind() -> Result<BackendKind, String> {
+fn parse_args() -> Result<GitBackend, String> {
     let mut args = std::env::args().skip(1);
+    let mut backend_id: Option<String> = None;
     while let Some(arg) = args.next() {
         if arg == "--backend" {
             let val = args
                 .next()
                 .ok_or_else(|| "missing value for --backend".to_string())?;
-            return match val.as_str() {
-                "git-system" => Ok(BackendKind::GitSystem),
-                "git-libgit2" => Ok(BackendKind::GitLibgit2),
-                other => Err(format!("unknown backend '{other}'")),
-            };
+            backend_id = Some(val);
         }
     }
-    Err("missing required argument: --backend <git-system|git-libgit2>".to_string())
+
+    match backend_id.as_deref() {
+        Some("git") => {}
+        Some(other) => return Err(format!("unknown backend '{other}'")),
+        None => return Err("missing required argument: --backend <git>".to_string()),
+    }
+
+    Ok(GitBackend::System)
+}
+
+fn git_backend_from_config(cfg: &serde_json::Value) -> Result<GitBackend, PluginError> {
+    let raw = cfg
+        .get("git")
+        .and_then(|v| v.get("backend"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("system")
+        .trim();
+    match raw {
+        "" | "system" => Ok(GitBackend::System),
+        "libgit2" => Ok(GitBackend::Libgit2),
+        other => Err(PluginError::message(format!(
+            "unknown git backend '{other}'"
+        ))),
+    }
 }
 
 fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
@@ -771,7 +797,7 @@ fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
 }
 
 fn main() {
-    let backend_kind = match parse_backend_kind() {
+    let git_backend = match parse_args() {
         Ok(k) => k,
         Err(e) => {
             eprintln!("openvcs-git-plugin: {e}");
@@ -780,7 +806,7 @@ fn main() {
     };
 
     let _ = STATE.set(Mutex::new(State {
-        backend_kind,
+        git_backend,
         repo: None,
     }));
 

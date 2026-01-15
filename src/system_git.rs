@@ -7,7 +7,7 @@ use openvcs_core::*;
 use std::path::{Path, PathBuf};
 /* ============================ registry wiring ============================ */
 
-pub const GIT_SYSTEM_ID: BackendId = backend_id!("git-system");
+pub const GIT_SYSTEM_ID: BackendId = backend_id!("git");
 
 fn git_ssh_command() -> String {
     "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes".to_string()

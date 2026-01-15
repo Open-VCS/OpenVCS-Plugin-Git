@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 
-pub const GIT_LIBGIT2_ID: BackendId = backend_id!("git-libgit2");
+pub const GIT_LIBGIT2_ID: BackendId = backend_id!("git");
 
 fn caps_static() -> Capabilities {
     Capabilities {
