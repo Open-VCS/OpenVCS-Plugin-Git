@@ -2,7 +2,7 @@
 mod system_git;
 
 #[cfg(feature = "system-git")]
-pub use system_git::GitSystem;
+pub use system_git::{GitSystem, LfsLock};
 
 #[cfg(feature = "libgit2")]
 mod libgit2;

@@ -4,6 +4,7 @@ use openvcs_core::models::{
     LogQuery, OnEvent, StashItem, StatusPayload, StatusSummary, VcsEvent,
 };
 use openvcs_core::*;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 /* ============================ registry wiring ============================ */
 
@@ -1481,6 +1482,49 @@ impl Vcs for GitSystem {
     // Git LFS helpers are Git-specific and are intentionally not part of the generic VCS trait.
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LfsLock {
+    pub id: Option<String>,
+    pub path: String,
+    pub owner: Option<String>,
+    pub locked_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LfsLockOwner {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LfsLockRaw {
+    id: Option<String>,
+    path: String,
+    locked_at: Option<String>,
+    owner: Option<LfsLockOwner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LfsLocksResponse {
+    #[serde(default)]
+    locks: Vec<LfsLockRaw>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LfsLockResponse {
+    lock: Option<LfsLockRaw>,
+}
+
+impl LfsLock {
+    fn from_raw(raw: LfsLockRaw) -> Self {
+        Self {
+            id: raw.id,
+            path: raw.path,
+            owner: raw.owner.and_then(|o| o.name),
+            locked_at: raw.locked_at,
+        }
+    }
+}
+
 impl GitSystem {
     pub fn lfs_fetch_all(&self) -> Result<()> {
         log::info!("git-system: lfs_fetch_all in {}", self.workdir.display());
@@ -1535,5 +1579,97 @@ impl GitSystem {
         // Output example: `path/to/file: filter: lfs`
         let out = Self::run_git_capture(Some(&self.workdir), ["check-attr", "filter", "--", p])?;
         Ok(out.lines().any(|l| l.contains("filter: lfs")))
+    }
+
+    pub fn lfs_is_available(&self) -> Result<bool> {
+        log::info!(
+            "git-system: lfs_is_available in {}",
+            self.workdir.display()
+        );
+        match Self::run_git(Some(&self.workdir), ["lfs", "version"]) {
+            Ok(()) => Ok(true),
+            Err(err) => {
+                log::warn!("git-system: lfs_is_available failed: {err}");
+                Ok(false)
+            }
+        }
+    }
+
+    pub fn lfs_locks(&self, cached: bool) -> Result<Vec<LfsLock>> {
+        log::info!(
+            "git-system: lfs_locks{} in {}",
+            if cached { " --cached" } else { "" },
+            self.workdir.display()
+        );
+        let mut args = vec!["lfs", "locks", "--json"];
+        if cached {
+            args.push("--cached");
+        }
+        let out = Self::run_git_capture(Some(&self.workdir), args)?;
+        let value: serde_json::Value = serde_json::from_str(&out).map_err(|e| VcsError::Backend {
+            backend: GIT_SYSTEM_ID,
+            msg: format!("git lfs locks parse failed: {e}"),
+        })?;
+        let raws: Vec<LfsLockRaw> = if value.is_array() {
+            log::debug!("git-system: lfs_locks json array response");
+            serde_json::from_value(value).map_err(|e| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: format!("git lfs locks parse failed: {e}"),
+            })?
+        } else if value.get("locks").is_some() {
+            log::debug!("git-system: lfs_locks json object response");
+            let parsed: LfsLocksResponse = serde_json::from_value(value).map_err(|e| {
+                VcsError::Backend {
+                    backend: GIT_SYSTEM_ID,
+                    msg: format!("git lfs locks parse failed: {e}"),
+                }
+            })?;
+            parsed.locks
+        } else {
+            Vec::new()
+        };
+        let locks: Vec<LfsLock> = raws.into_iter().map(LfsLock::from_raw).collect();
+        log::info!("git-system: lfs_locks count={}", locks.len());
+        Ok(locks)
+    }
+
+    pub fn lfs_lock(&self, path: &Path) -> Result<LfsLock> {
+        let p = Self::path_str(path)?;
+        log::info!(
+            "git-system: lfs_lock {} in {}",
+            p,
+            self.workdir.display()
+        );
+        let out = Self::run_git_capture(Some(&self.workdir), ["lfs", "lock", "--json", "--", p])?;
+        let parsed: LfsLockResponse = serde_json::from_str(&out).map_err(|e| VcsError::Backend {
+            backend: GIT_SYSTEM_ID,
+            msg: format!("git lfs lock parse failed: {e}"),
+        })?;
+        let lock = parsed.lock.ok_or_else(|| VcsError::Backend {
+            backend: GIT_SYSTEM_ID,
+            msg: "git lfs lock response missing lock".to_string(),
+        })?;
+        let lock = LfsLock::from_raw(lock);
+        log::info!("git-system: lfs_lock ok path={}", lock.path);
+        Ok(lock)
+    }
+
+    pub fn lfs_unlock(&self, path: &Path, force: bool) -> Result<()> {
+        let p = Self::path_str(path)?;
+        log::info!(
+            "git-system: lfs_unlock{} {} in {}",
+            if force { " --force" } else { "" },
+            p,
+            self.workdir.display()
+        );
+        let mut args = vec!["lfs", "unlock", "--json"];
+        if force {
+            args.push("--force");
+        }
+        args.push("--");
+        args.push(p);
+        Self::run_git(Some(&self.workdir), args)?;
+        log::info!("git-system: lfs_unlock ok path={}", p);
+        Ok(())
     }
 }

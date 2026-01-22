@@ -105,8 +105,51 @@ const LfsMenubarHtml = `
     <button class="menu-item" role="menuitem" data-action="lfs-fetch-all">Fetch LFS</button>
     <button class="menu-item" role="menuitem" data-action="lfs-prune">Prune LFS Cache</button>
     <div class="menu-sep" role="separator"></div>
+    <button class="menu-item" role="menuitem" data-action="lfs-manage-locks">Manage LFS Locks…</button>
+    <button class="menu-item" role="menuitem" data-action="lfs-refresh-locks">Refresh LFS Locks Cache</button>
     <button class="menu-item" role="menuitem" data-action="lfs-settings">LFS Preferences…</button>
   </div>
+</div>
+`.trim();
+
+const LfsLocksModalHtml = `
+<div class="modal lfs-locks-modal" id="lfs-locks-modal" aria-hidden="true">
+  <div class="dialog sheet" role="dialog" aria-modal="true" aria-labelledby="lfs-locks-title">
+    <div class="sheet-head">
+      <h3 id="lfs-locks-title" style="margin:0">LFS Locks</h3>
+      <button class="icon close" type="button" data-close aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="panel-form lfs-locks-form">
+        <div class="lfs-locks-hero">
+          <div class="lfs-locks-hero-text">
+            <div class="modal-note">Manage Git LFS locks for this repository.</div>
+            <div class="lfs-locks-force-hint" id="lfs-locks-force-hint">Hold Shift while clicking Unlock to force unlock.</div>
+          </div>
+          <div class="lfs-locks-count" id="lfs-locks-count">0 locks</div>
+        </div>
+        <div class="group">
+          <label for="lfs-locks-path">Lock path</label>
+          <div class="lfs-locks-input-row">
+            <input id="lfs-locks-path" type="text" placeholder="path/to/asset.bin" />
+            <button class="tbtn primary" id="lfs-locks-create" type="button">Create lock</button>
+          </div>
+          <div class="modal-note">Paths are relative to the repository root.</div>
+          <div class="modal-note" id="lfs-locks-state"></div>
+        </div>
+        <div class="group">
+          <label>Current locks</label>
+          <div class="lfs-locks-list" id="lfs-locks-list"></div>
+          <div class="modal-note" id="lfs-locks-empty" hidden>No locks found.</div>
+        </div>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button class="tbtn" id="lfs-locks-refresh" type="button">Refresh</button>
+      <button class="tbtn" type="button" data-close>Close</button>
+    </div>
+  </div>
+  <div class="backdrop" data-close></div>
 </div>
 `.trim();
 
@@ -135,6 +178,435 @@ try {
       method,
       params: { path, git_backend, lfs, ...(extra || {}) },
     });
+  };
+
+  const ensureLockStyle = () => {
+    if (document.getElementById('openvcs-lfs-lock-style')) return;
+    const style = document.createElement('style');
+    style.id = 'openvcs-lfs-lock-style';
+    style.textContent = `
+      .lfs-lock-mark{ color:var(--warning); opacity:0; transition:opacity .15s; font-weight:700; font-size:.7rem; letter-spacing:.04em; }
+      .row.lfs-locked .lfs-lock-mark{ opacity:1; }
+      .ctxmenu .item.lfs-disabled{ opacity:.45; pointer-events:none; }
+      .menu.lfs-disabled .menu-trigger{ opacity:.5; pointer-events:none; }
+      .menu.lfs-disabled .menu-list .menu-item{ opacity:.5; pointer-events:none; }
+      .lfs-locks-modal .dialog.sheet{ width:min(760px, 96vw); }
+      .lfs-locks-modal .sheet-body{ max-height:70vh; overflow:auto; }
+      .lfs-locks-hero{ display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:.4rem 0 .6rem; }
+      .lfs-locks-hero-text{ display:grid; gap:.2rem; }
+      .lfs-locks-force-hint{ color:var(--muted); font-size:.85rem; }
+      .lfs-locks-force-hint.active{ color:var(--danger); font-weight:600; }
+      .lfs-locks-count{ font-size:.85rem; color:var(--muted); border:1px solid var(--border); padding:.2rem .55rem; border-radius:999px; background:var(--surface-2); }
+      .lfs-locks-form .group{ display:grid; gap:.5rem; }
+      .lfs-locks-input-row{ display:grid; grid-template-columns:1fr auto; gap:.5rem; align-items:center; }
+      .lfs-locks-list{ display:grid; gap:.5rem; }
+      .lfs-lock-row{ display:grid; grid-template-columns:1fr auto; gap:.75rem; align-items:center; padding:.6rem .7rem; border:1px solid var(--border); border-radius:10px; background:var(--surface-2); }
+      .lfs-lock-path{ font-weight:600; word-break:break-all; }
+      .lfs-lock-meta{ color:var(--muted); font-size:.85rem; display:flex; flex-wrap:wrap; gap:.5rem; }
+      .lfs-lock-chip{ display:inline-flex; align-items:center; gap:.25rem; padding:.15rem .4rem; border-radius:999px; border:1px solid var(--border); background:var(--surface); font-size:.78rem; }
+    `;
+    document.head.appendChild(style);
+  };
+
+  const lockTitle = (lock) => {
+    const owner = String(lock?.owner || '').trim();
+    const who = owner ? ` by ${owner}` : '';
+    return `LFS lock${who}`;
+  };
+
+  const normalizePath = (value) => String(value || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  const escapeCss = (value) => {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
+    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  };
+  let lfsAvailable = true;
+  let lockMap = new Map();
+  let lfsLocksModalOverflow = null;
+  let forceUnlockHeld = false;
+  let lastLocksSignature = '';
+  const updateLockMarks = (locks) => {
+    ensureLockStyle();
+    const map = new Map();
+    (Array.isArray(locks) ? locks : []).forEach((lock) => {
+      const path = normalizePath(lock?.path || '');
+      if (path) map.set(path, lock);
+    });
+    const prevMap = lockMap;
+    lockMap = map;
+    if (lockMap.size === 0 && prevMap.size === 0) return;
+    const touched = new Set();
+    prevMap.forEach((_value, path) => touched.add(path));
+    lockMap.forEach((_value, path) => touched.add(path));
+    if (touched.size === 0) return;
+    touched.forEach((path) => {
+      const row = document.querySelector(`li.row[data-path="${escapeCss(path)}"]`);
+      if (!row) return;
+      const marks = row.querySelector('.row-marks');
+      if (!marks) return;
+      let mark = marks.querySelector('.lfs-lock-mark');
+      if (!mark) {
+        mark = document.createElement('span');
+        mark.className = 'lfs-lock-mark';
+        mark.setAttribute('aria-hidden', 'true');
+        mark.textContent = 'LOCK';
+        marks.appendChild(mark);
+      }
+      const lock = lockMap.get(path) || null;
+      row.classList.toggle('lfs-locked', !!lock);
+      if (lock) {
+        mark.setAttribute('title', lockTitle(lock));
+      } else {
+        mark.removeAttribute('title');
+      }
+    });
+  };
+
+  const renderLfsLocks = (locks) => {
+    const list = document.getElementById('lfs-locks-list');
+    const empty = document.getElementById('lfs-locks-empty');
+    const count = document.getElementById('lfs-locks-count');
+    if (!list || !empty) return;
+    list.innerHTML = '';
+    if (count) {
+      const total = Array.isArray(locks) ? locks.length : 0;
+      count.textContent = `${total} lock${total === 1 ? '' : 's'}`;
+    }
+    if (!Array.isArray(locks) || locks.length === 0) {
+      empty.hidden = false;
+      return;
+    }
+    empty.hidden = true;
+    locks.forEach((lock) => {
+      const row = document.createElement('div');
+      row.className = 'lfs-lock-row';
+      row.setAttribute('data-path', String(lock?.path || ''));
+
+      const left = document.createElement('div');
+      const path = document.createElement('div');
+      path.className = 'lfs-lock-path';
+      path.textContent = String(lock?.path || '');
+      const meta = document.createElement('div');
+      meta.className = 'lfs-lock-meta';
+
+      const owner = String(lock?.owner || '').trim();
+      const lockedAt = String(lock?.locked_at || '').trim();
+      const ownerChip = document.createElement('span');
+      ownerChip.className = 'lfs-lock-chip';
+      ownerChip.textContent = owner ? `Owner: ${owner}` : 'Owner: unknown';
+      meta.appendChild(ownerChip);
+      if (lockedAt) {
+        const timeChip = document.createElement('span');
+        timeChip.className = 'lfs-lock-chip';
+        timeChip.textContent = `Locked: ${lockedAt}`;
+        meta.appendChild(timeChip);
+      }
+      const id = String(lock?.id || '').trim();
+      if (id) {
+        const idChip = document.createElement('span');
+        idChip.className = 'lfs-lock-chip';
+        idChip.textContent = `ID: ${id}`;
+        meta.appendChild(idChip);
+      }
+
+      left.appendChild(path);
+      left.appendChild(meta);
+
+      const button = document.createElement('button');
+      button.className = 'tbtn';
+      button.type = 'button';
+      button.textContent = forceUnlockHeld ? 'Force unlock' : 'Unlock';
+      if (forceUnlockHeld) button.classList.add('danger');
+      button.setAttribute('data-action', 'unlock');
+      button.setAttribute('data-path', String(lock?.path || ''));
+
+      row.appendChild(left);
+      row.appendChild(button);
+      list.appendChild(row);
+    });
+  };
+
+  const applyLocks = (locks) => {
+    updateLockMarks(locks);
+    if (isLfsLocksModalOpen()) {
+      const signature = lockSignature(locks);
+      if (signature !== lastLocksSignature) {
+        lastLocksSignature = signature;
+        renderLfsLocks(locks);
+      }
+    }
+    updateContextMenuLabel();
+  };
+
+  const lockSignature = (locks) => {
+    if (!Array.isArray(locks) || locks.length === 0) return '';
+    return locks
+      .map((lock) => [
+        String(lock?.path || ''),
+        String(lock?.id || ''),
+        String(lock?.owner || ''),
+        String(lock?.locked_at || ''),
+      ].join('|'))
+      .sort()
+      .join('||');
+  };
+
+  const isLfsLocksModalOpen = () => {
+    const modal = document.getElementById('lfs-locks-modal');
+    return !!modal && modal.getAttribute('aria-hidden') === 'false';
+  };
+
+  const updateForceUnlockUi = (held) => {
+    if (forceUnlockHeld === held) return;
+    forceUnlockHeld = held;
+    const modal = document.getElementById('lfs-locks-modal');
+    if (!modal) return;
+    const hint = modal.querySelector('#lfs-locks-force-hint');
+    if (hint) {
+      hint.textContent = held
+        ? 'Force unlock enabled (Shift).'
+        : 'Hold Shift while clicking Unlock to force unlock.';
+      hint.classList.toggle('active', held);
+    }
+    const buttons = modal.querySelectorAll('[data-action="unlock"]');
+    buttons.forEach((btn) => {
+      if (!(btn instanceof HTMLButtonElement)) return;
+      btn.textContent = held ? 'Force unlock' : 'Unlock';
+      btn.classList.toggle('danger', held);
+    });
+  };
+
+  const fetchLocks = async (options) => {
+    const cached = options?.refresh !== true;
+    if (!lfsAvailable) return [];
+    const path = await getRepoPath();
+    if (!path) return [];
+    const cfg = await getCfg();
+    const lfs = cfg?.lfs || null;
+    if (lfs && lfs.enabled === false) return [];
+    const git_backend = String(cfg?.git?.backend || 'system');
+    try {
+      const res = await window.OpenVCS?.invoke?.('call_vcs_backend_method', {
+        backendId: 'git',
+        method: 'git.lfs.locks',
+        params: { path, git_backend, lfs, cached },
+      });
+      return Array.isArray(res) ? res : [];
+    } catch {
+      return [];
+    }
+  };
+
+  let lockRefreshInFlight = false;
+  const refreshLocks = async (options) => {
+    if (lockRefreshInFlight) return;
+    lockRefreshInFlight = true;
+    try {
+      const locks = await fetchLocks(options);
+      applyLocks(locks);
+    } finally {
+      lockRefreshInFlight = false;
+    }
+  };
+
+  const updateLfsAvailability = (available) => {
+    lfsAvailable = !!available;
+    ensureLockStyle();
+    const menu = document.querySelector('.menu[data-menu="lfs"]');
+    if (menu) {
+      menu.classList.toggle('lfs-disabled', !lfsAvailable);
+      menu.setAttribute('aria-disabled', String(!lfsAvailable));
+    }
+    if (!lfsAvailable) applyLocks([]);
+    updateContextMenuLabel();
+  };
+
+  const refreshLfsAvailability = async () => {
+    const path = await getRepoPath();
+    if (!path) {
+      updateLfsAvailability(false);
+      return;
+    }
+    const cfg = await getCfg();
+    const git_backend = String(cfg?.git?.backend || 'system');
+    try {
+      const res = await window.OpenVCS?.invoke?.('call_vcs_backend_method', {
+        backendId: 'git',
+        method: 'git.lfs.is_available',
+        params: { path, git_backend },
+      });
+      updateLfsAvailability(!!res);
+    } catch {
+      updateLfsAvailability(false);
+    }
+  };
+
+  let lastContextPath = '';
+  const updateContextMenuLabel = () => {
+    const menu = document.querySelector('.ctxmenu');
+    if (!menu) return;
+    const items = Array.from(menu.querySelectorAll('.item'));
+    if (!items.length) return;
+    const target = items.find((el) => {
+      const txt = String(el.textContent || '').trim();
+      return txt === 'Lock file' || txt === 'Unlock file';
+    });
+    if (!target) return;
+    const locked = lastContextPath && lockMap.has(lastContextPath);
+    target.textContent = locked ? 'Unlock file' : 'Lock file';
+    target.classList.toggle('lfs-disabled', !lfsAvailable);
+  };
+
+  const ensureLfsLocksModal = () => {
+    if (document.getElementById('lfs-locks-modal')) return;
+    ensureLockStyle();
+    const root = document.getElementById('modals-root') || document.body;
+    root.insertAdjacentHTML('beforeend', LfsLocksModalHtml);
+    const modal = document.getElementById('lfs-locks-modal');
+    if (!modal) return;
+    if (!(modal).__wired) {
+      modal.addEventListener('click', (evt) => {
+        const target = evt.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (target.closest('[data-close]')) {
+          closeLfsLocksModal();
+        }
+      });
+      document.addEventListener('keydown', (evt) => {
+        if (evt.key !== 'Escape') return;
+        if (modal.getAttribute('aria-hidden') === 'false') {
+          closeLfsLocksModal();
+        }
+      });
+      const list = modal.querySelector('#lfs-locks-list');
+      list?.addEventListener('click', async (evt) => {
+        const target = evt.target;
+        if (!(target instanceof HTMLElement)) return;
+        const btn = target.closest('[data-action="unlock"]');
+        if (!btn) return;
+        const path = String(btn.getAttribute('data-path') || '').trim();
+        if (!path) return;
+        try {
+          const force = evt.shiftKey || forceUnlockHeld;
+          await call('git.lfs.unlock_paths', { paths: [path], force });
+          window.OpenVCS?.notify?.(force ? 'Force-unlocked file in Git LFS' : 'Unlocked file in Git LFS');
+          await refreshLocks({ refresh: true });
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Git LFS unlock failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      });
+      const createBtn = modal.querySelector('#lfs-locks-create');
+      const refreshBtn = modal.querySelector('#lfs-locks-refresh');
+      const input = modal.querySelector('#lfs-locks-path');
+      createBtn?.addEventListener('click', async () => {
+        const value = String(input?.value || '').trim();
+        if (!value) {
+          window.OpenVCS?.notify?.('Enter a path to lock');
+          return;
+        }
+        try {
+          await call('git.lfs.lock_paths', { paths: [value] });
+          window.OpenVCS?.notify?.('Locked file in Git LFS');
+          if (input) input.value = '';
+          await refreshLocks({ refresh: true });
+        } catch (e) {
+          const msg = String(e || '').trim();
+          if (msg.toLowerCase().includes('lock exists')) {
+            window.OpenVCS?.notify?.('Git LFS lock already exists');
+          } else {
+            window.OpenVCS?.notify?.(`Git LFS lock failed: ${msg || 'unknown error'}`);
+          }
+          await refreshLocks({ refresh: true });
+        }
+      });
+      input?.addEventListener('keydown', (evt) => {
+        if (evt.key === 'Enter') {
+          evt.preventDefault();
+          createBtn?.dispatchEvent(new Event('click'));
+        }
+      });
+      refreshBtn?.addEventListener('click', async () => {
+        await refreshLocks({ refresh: true });
+      });
+      const handleShift = (evt) => {
+        if (evt.key !== 'Shift') return;
+        if (modal.getAttribute('aria-hidden') !== 'false') return;
+        if (evt.type === 'keydown' && evt.repeat) return;
+        updateForceUnlockUi(evt.type === 'keydown');
+      };
+      document.addEventListener('keydown', handleShift);
+      document.addEventListener('keyup', handleShift);
+      window.addEventListener('blur', () => updateForceUnlockUi(false));
+      (modal).__wired = true;
+    }
+  };
+
+  const setLfsLocksModalState = (state) => {
+    const modal = document.getElementById('lfs-locks-modal');
+    if (!modal) return;
+    const note = modal.querySelector('#lfs-locks-state');
+    if (note) {
+      note.textContent = state.message || '';
+      note.style.display = state.message ? 'block' : 'none';
+    }
+    const disable = !state.available;
+    const controls = modal.querySelectorAll('#lfs-locks-path, #lfs-locks-create, #lfs-locks-refresh, [data-action="unlock"]');
+    controls.forEach((el) => { el.disabled = disable; });
+  };
+
+  const refreshLfsLocksModal = async () => {
+    const path = await getRepoPath();
+    if (!path) {
+      setLfsLocksModalState({ available: false, message: 'Select a repository to manage Git LFS locks.' });
+      applyLocks([]);
+      return;
+    }
+    const cfg = await getCfg();
+    if (cfg?.lfs?.enabled === false) {
+      setLfsLocksModalState({ available: false, message: 'Enable Git LFS integration in Settings to manage locks.' });
+      applyLocks([]);
+      return;
+    }
+    if (!lfsAvailable) {
+      setLfsLocksModalState({ available: false, message: 'Git LFS is not available for this repository.' });
+      applyLocks([]);
+      return;
+    }
+    setLfsLocksModalState({ available: true, message: '' });
+    await refreshLocks();
+  };
+
+  const openLfsLocksModal = async () => {
+    const path = await getRepoPath();
+    if (!path) {
+      window.OpenVCS?.notify?.('No repository selected');
+      return;
+    }
+    ensureLfsLocksModal();
+    const modal = document.getElementById('lfs-locks-modal');
+    if (!modal) return;
+    if (!modal.hasAttribute('aria-hidden')) modal.setAttribute('aria-hidden', 'true');
+    modal.setAttribute('aria-hidden', 'false');
+    updateForceUnlockUi(false);
+    if (lfsLocksModalOverflow === null) {
+      lfsLocksModalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+    }
+    await refreshLfsLocksModal();
+    const input = modal.querySelector('#lfs-locks-path');
+    if (input instanceof HTMLElement) input.focus();
+  };
+
+  const closeLfsLocksModal = () => {
+    const modal = document.getElementById('lfs-locks-modal');
+    if (!modal) return;
+    if (modal.getAttribute('aria-hidden') !== 'true') {
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    updateForceUnlockUi(false);
+    if (lfsLocksModalOverflow !== null) {
+      document.body.style.overflow = lfsLocksModalOverflow;
+      lfsLocksModalOverflow = null;
+    }
   };
 
   window.OpenVCS?.addSettingsSection?.({
@@ -186,6 +658,21 @@ try {
           window.OpenVCS?.notify?.(`Git LFS prune failed: ${String(e || '').trim() || 'unknown error'}`);
         }
       },
+      'lfs-refresh-locks': async () => {
+        try {
+          await refreshLocks({ refresh: true });
+          window.OpenVCS?.notify?.('Refreshed Git LFS locks');
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Git LFS locks refresh failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      },
+      'lfs-manage-locks': async () => {
+        try {
+          await openLfsLocksModal();
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Git LFS locks failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      },
       'git-lfs-track': async (payload) => {
         const paths = Array.isArray(payload?.paths) ? payload.paths : [];
         try {
@@ -204,11 +691,43 @@ try {
           window.OpenVCS?.notify?.(`Git LFS untrack failed: ${String(e || '').trim() || 'unknown error'}`);
         }
       },
+      'git-lfs-toggle-lock': async (payload) => {
+        const rawPaths = Array.isArray(payload?.paths) ? payload.paths : [];
+        const clicked = normalizePath(payload?.clickedPath || '');
+        const paths = (rawPaths.length ? rawPaths : (clicked ? [clicked] : []))
+          .map((p) => normalizePath(p))
+          .filter(Boolean);
+        try {
+          if (!lfsAvailable) {
+            window.OpenVCS?.notify?.('Git LFS is not available');
+            return;
+          }
+          const locks = await fetchLocks({ refresh: true });
+          applyLocks(locks);
+          const locked = paths.filter((p) => lockMap.has(p));
+          const unlocked = paths.filter((p) => !lockMap.has(p));
+          if (unlocked.length > 0) {
+            await call('git.lfs.lock_paths', { paths: unlocked });
+            window.OpenVCS?.notify?.(unlocked.length > 1 ? 'Locked files in Git LFS' : 'Locked file in Git LFS');
+          } else if (locked.length > 0) {
+            await call('git.lfs.unlock_paths', { paths: locked });
+            window.OpenVCS?.notify?.(locked.length > 1 ? 'Unlocked files in Git LFS' : 'Unlocked file in Git LFS');
+          }
+          await refreshLocks({ refresh: true });
+        } catch (e) {
+          const msg = String(e || '').trim();
+          if (msg.toLowerCase().includes('lock exists')) {
+            await refreshLocks({ refresh: true });
+            window.OpenVCS?.notify?.('Git LFS lock already exists');
+          } else {
+            window.OpenVCS?.notify?.(`Git LFS lock toggle failed: ${msg || 'unknown error'}`);
+          }
+        }
+      },
     },
     contextMenus: {
       files: [
-        { label: 'Add to Git LFS', action: 'git-lfs-track' },
-        { label: 'Remove from Git LFS', action: 'git-lfs-untrack' },
+        { label: 'Lock file', action: 'git-lfs-toggle-lock' },
       ],
     },
     // Also register the menubar menu via the plugin registration API as a
@@ -223,6 +742,23 @@ try {
       },
     ],
   });
+
+  window.addEventListener('app:status-updated', () => {
+    refreshLocks();
+  });
+  window.addEventListener('app:repo-selected', () => {
+    refreshLfsAvailability();
+    refreshLocks();
+  });
+  document.addEventListener('contextmenu', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const row = target.closest('li.row[data-path]');
+    lastContextPath = row ? normalizePath(row.getAttribute('data-path') || '') : '';
+    setTimeout(updateContextMenuLabel, 0);
+  }, { capture: true });
+  refreshLfsAvailability();
+  refreshLocks();
 } catch (e) {
   // Plugin UI contributions are best-effort; ignore failures.
   void e;
