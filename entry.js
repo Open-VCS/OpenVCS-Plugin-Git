@@ -279,7 +279,19 @@ try {
       .submodule-meta{ color:var(--muted); font-size:.85rem; display:flex; flex-wrap:wrap; gap:.5rem; }
       .submodule-actions{ display:flex; gap:.4rem; flex-wrap:wrap; justify-content:flex-end; }
       .submodule-chip{ display:inline-flex; align-items:center; gap:.25rem; padding:.15rem .4rem; border-radius:999px; border:1px solid var(--border); background:var(--surface); font-size:.78rem; }
-      .plugin-loading{ display:flex; align-items:center; gap:.7rem; color:var(--text); font-size:1.02rem; font-weight:600; }
+      .plugin-loading{
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        justify-content:center;
+        gap:.55rem;
+        width:100%;
+        min-height:78px;
+        text-align:center;
+        color:var(--text);
+        font-size:1.02rem;
+        font-weight:600;
+      }
       .plugin-loading.hidden{ display:none !important; }
       .plugin-loading .spinner{
         width:22px; height:22px; border-radius:999px;
