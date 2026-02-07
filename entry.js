@@ -331,6 +331,15 @@ try {
       .submodule-meta{ color:var(--muted); font-size:.85rem; display:flex; flex-wrap:wrap; gap:.5rem; }
       .submodule-actions{ display:flex; gap:.4rem; flex-wrap:wrap; justify-content:flex-end; }
       .submodule-chip{ display:inline-flex; align-items:center; gap:.25rem; padding:.15rem .4rem; border-radius:999px; border:1px solid var(--border); background:var(--surface); font-size:.78rem; }
+      .submodule-add-modal .dialog.sheet{ width:min(640px, 94vw); }
+      .submodule-add-modal .sheet-head{ padding:.85rem 1rem; }
+      .submodule-add-modal .sheet-body{ padding:1.1rem 1rem 1rem; }
+      .submodule-add-modal .sheet-actions{ padding:.9rem 1rem 1rem; gap:.6rem; }
+      .submodule-add-modal .panel-form{ gap:1.2rem; }
+      .submodule-add-modal .panel-form .group{ display:grid; gap:.65rem; }
+      .submodule-add-modal .panel-form .group + .group{ margin-top:.2rem; }
+      .submodule-add-modal label{ display:block; margin:0 0 .2rem; font-size:1rem; font-weight:600; line-height:1.35; }
+      .submodule-add-modal input{ min-height:44px; font-size:1rem; line-height:1.3; padding:.65rem .8rem; }
       .plugin-loading{
         display:flex;
         flex-direction:column;
