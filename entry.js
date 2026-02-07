@@ -125,6 +125,35 @@ const SubmoduleMenubarHtml = `
 </div>
 `.trim();
 
+const SubmoduleModalHtml = `
+<div class="modal submodules-modal" id="submodules-modal" aria-hidden="true">
+  <div class="dialog sheet" role="dialog" aria-modal="true" aria-labelledby="submodules-title">
+    <div class="sheet-head">
+      <h3 id="submodules-title" style="margin:0">Submodules</h3>
+      <button class="icon close" type="button" data-close aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="panel-form">
+        <div class="group"><div class="modal-note" id="submodules-state"></div></div>
+        <div class="group">
+          <label>Repository submodules</label>
+          <div class="submodules-list" id="submodules-list"></div>
+          <div class="modal-note" id="submodules-empty" hidden>No submodules found.</div>
+        </div>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button class="tbtn" id="submodules-refresh" type="button">Refresh</button>
+      <button class="tbtn" id="submodules-update-all" type="button">Update All</button>
+      <button class="tbtn" id="submodules-sync-all" type="button">Sync All</button>
+      <button class="tbtn primary" id="submodules-add" type="button">Add…</button>
+      <button class="tbtn" type="button" data-close>Close</button>
+    </div>
+  </div>
+  <div class="backdrop" data-close></div>
+</div>
+`.trim();
+
 const LfsLocksModalHtml = `
 <div class="modal lfs-locks-modal" id="lfs-locks-modal" aria-hidden="true">
   <div class="dialog sheet" role="dialog" aria-modal="true" aria-labelledby="lfs-locks-title">
@@ -234,6 +263,14 @@ try {
       .lfs-lock-path{ font-weight:600; word-break:break-all; }
       .lfs-lock-meta{ color:var(--muted); font-size:.85rem; display:flex; flex-wrap:wrap; gap:.5rem; }
       .lfs-lock-chip{ display:inline-flex; align-items:center; gap:.25rem; padding:.15rem .4rem; border-radius:999px; border:1px solid var(--border); background:var(--surface); font-size:.78rem; }
+      .submodules-modal .dialog.sheet{ width:min(840px, 96vw); }
+      .submodules-modal .sheet-body{ max-height:70vh; overflow:auto; }
+      .submodules-list{ display:grid; gap:.5rem; }
+      .submodule-row{ display:grid; grid-template-columns:1fr auto; gap:.75rem; align-items:center; padding:.6rem .7rem; border:1px solid var(--border); border-radius:10px; background:var(--surface-2); }
+      .submodule-path{ font-weight:600; word-break:break-all; }
+      .submodule-meta{ color:var(--muted); font-size:.85rem; display:flex; flex-wrap:wrap; gap:.5rem; }
+      .submodule-actions{ display:flex; gap:.4rem; flex-wrap:wrap; justify-content:flex-end; }
+      .submodule-chip{ display:inline-flex; align-items:center; gap:.25rem; padding:.15rem .4rem; border-radius:999px; border:1px solid var(--border); background:var(--surface); font-size:.78rem; }
     `;
     document.head.appendChild(style);
   };
@@ -252,8 +289,10 @@ try {
   let lfsAvailable = true;
   let lockMap = new Map();
   let lfsLocksModalOverflow = null;
+  let submodulesModalOverflow = null;
   let forceUnlockHeld = false;
   let lastLocksSignature = '';
+  let lastSubmodulesSignature = '';
   const updateLockMarks = (locks) => {
     ensureLockStyle();
     const map = new Map();
@@ -639,6 +678,243 @@ try {
     }
   };
 
+  const submoduleSignature = (items) => {
+    if (!Array.isArray(items) || items.length === 0) return '';
+    return items.map((s) => [
+      String(s?.path || ''),
+      String(s?.url || ''),
+      String(s?.branch || ''),
+      s?.initialized ? '1' : '0',
+      s?.dirty ? '1' : '0',
+      s?.conflicted ? '1' : '0',
+    ].join('|')).sort().join('||');
+  };
+
+  const renderSubmoduleRows = (items) => {
+    const list = document.getElementById('submodules-list');
+    const empty = document.getElementById('submodules-empty');
+    if (!list || !empty) return;
+    list.innerHTML = '';
+    if (!Array.isArray(items) || items.length === 0) {
+      empty.hidden = false;
+      return;
+    }
+    empty.hidden = true;
+    items.forEach((s) => {
+      const path = String(s?.path || '').trim();
+      if (!path) return;
+      const row = document.createElement('div');
+      row.className = 'submodule-row';
+      row.setAttribute('data-path', path);
+
+      const left = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'submodule-path';
+      title.textContent = path;
+      const meta = document.createElement('div');
+      meta.className = 'submodule-meta';
+
+      const url = String(s?.url || '').trim();
+      const branch = String(s?.branch || '').trim();
+      const flags = [
+        s?.initialized ? null : 'uninitialized',
+        s?.dirty ? 'dirty' : null,
+        s?.conflicted ? 'conflicted' : null,
+      ].filter(Boolean);
+      if (url) {
+        const c = document.createElement('span');
+        c.className = 'submodule-chip';
+        c.textContent = `URL: ${url}`;
+        meta.appendChild(c);
+      }
+      if (branch) {
+        const c = document.createElement('span');
+        c.className = 'submodule-chip';
+        c.textContent = `Branch: ${branch}`;
+        meta.appendChild(c);
+      }
+      if (flags.length) {
+        const c = document.createElement('span');
+        c.className = 'submodule-chip';
+        c.textContent = flags.join(', ');
+        meta.appendChild(c);
+      }
+      left.appendChild(title);
+      left.appendChild(meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'submodule-actions';
+      actions.innerHTML = `
+        <button class="tbtn" type="button" data-action="sub-open" data-path="${path}">Open</button>
+        <button class="tbtn" type="button" data-action="sub-update" data-path="${path}">Update</button>
+        <button class="tbtn" type="button" data-action="sub-sync" data-path="${path}">Sync</button>
+        <button class="tbtn danger" type="button" data-action="sub-remove" data-path="${path}">Remove</button>
+      `;
+      row.appendChild(left);
+      row.appendChild(actions);
+      list.appendChild(row);
+    });
+  };
+
+  const setSubmodulesModalState = (state) => {
+    const modal = document.getElementById('submodules-modal');
+    if (!modal) return;
+    const note = modal.querySelector('#submodules-state');
+    if (note) {
+      note.textContent = state.message || '';
+      note.style.display = state.message ? 'block' : 'none';
+    }
+    const disable = !state.available;
+    const controls = modal.querySelectorAll('#submodules-refresh, #submodules-update-all, #submodules-sync-all, #submodules-add, [data-action^="sub-"]');
+    controls.forEach((el) => { el.disabled = disable; });
+  };
+
+  const fetchSubmodules = async () => {
+    const available = await callSubmodule('git.submodule.is_available');
+    if (!available) return { available: false, items: [] };
+    const list = await callSubmodule('git.submodule.list');
+    return { available: true, items: Array.isArray(list) ? list : [] };
+  };
+
+  const refreshSubmodulesModal = async () => {
+    try {
+      const path = await getRepoPath();
+      if (!path) {
+        setSubmodulesModalState({ available: false, message: 'Select a repository to manage submodules.' });
+        renderSubmoduleRows([]);
+        return;
+      }
+      const next = await fetchSubmodules();
+      if (!next.available) {
+        setSubmodulesModalState({ available: false, message: 'Submodule operations are unavailable for this backend.' });
+        renderSubmoduleRows([]);
+        return;
+      }
+      setSubmodulesModalState({ available: true, message: '' });
+      const sig = submoduleSignature(next.items);
+      if (sig !== lastSubmodulesSignature) {
+        lastSubmodulesSignature = sig;
+        renderSubmoduleRows(next.items);
+      }
+    } catch (e) {
+      setSubmodulesModalState({ available: false, message: `Failed to load submodules: ${String(e || '').trim() || 'unknown error'}` });
+      renderSubmoduleRows([]);
+    }
+  };
+
+  const closeSubmodulesModal = () => {
+    const modal = document.getElementById('submodules-modal');
+    if (!modal) return;
+    if (modal.getAttribute('aria-hidden') !== 'true') {
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    if (submodulesModalOverflow !== null) {
+      document.body.style.overflow = submodulesModalOverflow;
+      submodulesModalOverflow = null;
+    }
+  };
+
+  const ensureSubmodulesModal = () => {
+    if (document.getElementById('submodules-modal')) return;
+    ensureLockStyle();
+    const root = document.getElementById('modals-root') || document.body;
+    root.insertAdjacentHTML('beforeend', SubmoduleModalHtml);
+    const modal = document.getElementById('submodules-modal');
+    if (!modal || modal.__wired) return;
+
+    modal.addEventListener('click', async (evt) => {
+      const target = evt.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.closest('[data-close]')) {
+        closeSubmodulesModal();
+        return;
+      }
+      const btn = target.closest('button[data-action]');
+      if (!btn) return;
+      const action = String(btn.getAttribute('data-action') || '');
+      const path = String(btn.getAttribute('data-path') || '').trim();
+      try {
+        if (action === 'sub-update' && path) {
+          await callSubmodule('git.submodule.update', { init: true, recursive: true, remote: false, paths: [path] });
+          window.OpenVCS?.notify?.(`Updated submodule ${path}`);
+        } else if (action === 'sub-sync' && path) {
+          await callSubmodule('git.submodule.sync', { recursive: true, paths: [path] });
+          window.OpenVCS?.notify?.(`Synced submodule ${path}`);
+        } else if (action === 'sub-remove' && path) {
+          const ok = window.confirm(`Remove submodule ${path}? This removes mapping and stages deletion.`);
+          if (!ok) return;
+          await callSubmodule('git.submodule.remove', { submodule_path: path, force: false });
+          window.OpenVCS?.notify?.(`Removed submodule ${path}`);
+        } else if (action === 'sub-open' && path) {
+          await window.OpenVCS?.invoke?.('open_repo_file', { path });
+        } else {
+          return;
+        }
+        window.dispatchEvent(new CustomEvent('app:status-updated'));
+        await refreshSubmodulesModal();
+      } catch (e) {
+        window.OpenVCS?.notify?.(`Submodule action failed: ${String(e || '').trim() || 'unknown error'}`);
+      }
+    });
+
+    modal.querySelector('#submodules-refresh')?.addEventListener('click', async () => {
+      await refreshSubmodulesModal();
+    });
+    modal.querySelector('#submodules-update-all')?.addEventListener('click', async () => {
+      try {
+        await callSubmodule('git.submodule.update', { init: true, recursive: true, remote: false, paths: [] });
+        window.OpenVCS?.notify?.('Updated submodules');
+        window.dispatchEvent(new CustomEvent('app:status-updated'));
+        await refreshSubmodulesModal();
+      } catch (e) {
+        window.OpenVCS?.notify?.(`Submodule update failed: ${String(e || '').trim() || 'unknown error'}`);
+      }
+    });
+    modal.querySelector('#submodules-sync-all')?.addEventListener('click', async () => {
+      try {
+        await callSubmodule('git.submodule.sync', { recursive: true, paths: [] });
+        window.OpenVCS?.notify?.('Synced submodule remotes');
+        await refreshSubmodulesModal();
+      } catch (e) {
+        window.OpenVCS?.notify?.(`Submodule sync failed: ${String(e || '').trim() || 'unknown error'}`);
+      }
+    });
+    modal.querySelector('#submodules-add')?.addEventListener('click', async () => {
+      const url = String(window.prompt('Submodule URL', '') || '').trim();
+      if (!url) return;
+      const submodulePath = String(window.prompt('Submodule path (relative to repo root)', '') || '').trim();
+      if (!submodulePath) return;
+      try {
+        await callSubmodule('git.submodule.add', { url, submodule_path: submodulePath });
+        window.OpenVCS?.notify?.('Submodule added');
+        window.dispatchEvent(new CustomEvent('app:status-updated'));
+        await refreshSubmodulesModal();
+      } catch (e) {
+        window.OpenVCS?.notify?.(`Submodule add failed: ${String(e || '').trim() || 'unknown error'}`);
+      }
+    });
+    document.addEventListener('keydown', (evt) => {
+      if (evt.key !== 'Escape') return;
+      if (modal.getAttribute('aria-hidden') === 'false') {
+        closeSubmodulesModal();
+      }
+    });
+    modal.__wired = true;
+  };
+
+  const openSubmodulesModal = async () => {
+    ensureSubmodulesModal();
+    const modal = document.getElementById('submodules-modal');
+    if (!modal) return;
+    if (!modal.hasAttribute('aria-hidden')) modal.setAttribute('aria-hidden', 'true');
+    modal.setAttribute('aria-hidden', 'false');
+    if (submodulesModalOverflow === null) {
+      submodulesModalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+    }
+    await refreshSubmodulesModal();
+  };
+
   window.OpenVCS?.addSettingsSection?.({
     id: 'git',
     label: 'Git',
@@ -763,26 +1039,7 @@ try {
       },
       'submodules-list': async () => {
         try {
-          const available = await callSubmodule('git.submodule.is_available');
-          if (!available) {
-            window.OpenVCS?.notify?.('Submodule operations are unavailable for this backend');
-            return;
-          }
-          const list = await callSubmodule('git.submodule.list');
-          const rows = Array.isArray(list) ? list : [];
-          if (!rows.length) {
-            window.OpenVCS?.notify?.('No submodules found');
-            return;
-          }
-          const lines = rows.slice(0, 10).map((s) => {
-            const flags = [
-              s?.initialized ? null : 'uninitialized',
-              s?.dirty ? 'dirty' : null,
-              s?.conflicted ? 'conflicted' : null,
-            ].filter(Boolean).join(', ');
-            return `${String(s?.path || '')}${flags ? ` (${flags})` : ''}`;
-          });
-          window.OpenVCS?.notify?.(`Submodules (${rows.length}): ${lines.join(' | ')}`);
+          await openSubmodulesModal();
         } catch (e) {
           window.OpenVCS?.notify?.(`Submodule list failed: ${String(e || '').trim() || 'unknown error'}`);
         }
