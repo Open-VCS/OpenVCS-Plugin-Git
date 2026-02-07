@@ -335,11 +335,11 @@ try {
       .submodule-add-modal .sheet-head{ padding:.85rem 1rem; }
       .submodule-add-modal .sheet-body{ padding:1.1rem 1rem 1rem; }
       .submodule-add-modal .sheet-actions{ padding:.9rem 1rem 1rem; gap:.6rem; }
-      .submodule-add-modal .panel-form{ gap:1.2rem; }
-      .submodule-add-modal .panel-form .group{ display:grid; gap:.65rem; }
-      .submodule-add-modal .panel-form .group + .group{ margin-top:.2rem; }
-      .submodule-add-modal label{ display:block; margin:0 0 .2rem; font-size:1rem; font-weight:600; line-height:1.35; }
-      .submodule-add-modal input{ min-height:44px; font-size:1rem; line-height:1.3; padding:.65rem .8rem; }
+      .submodule-add-modal .panel-form{ gap:1.4rem; }
+      .submodule-add-modal .panel-form .group{ display:grid; gap:.6rem; align-content:start; }
+      .submodule-add-modal .panel-form .group + .group{ margin-top:.55rem; }
+      .submodule-add-modal label{ display:block; margin:0; font-size:1rem; font-weight:600; line-height:1.35; }
+      .submodule-add-modal input{ display:block; width:100%; min-height:44px; margin:0; font-size:1rem; line-height:1.3; padding:.65rem .8rem; }
       .plugin-loading{
         display:flex;
         flex-direction:column;
