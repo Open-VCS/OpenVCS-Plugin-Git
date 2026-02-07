@@ -117,7 +117,7 @@ impl GitSystem {
     }
 
     fn decode_utf16_text(bytes: &[u8]) -> Option<String> {
-        if bytes.len() < 2 || bytes.len() % 2 != 0 {
+        if bytes.len() < 2 || !bytes.len().is_multiple_of(2) {
             return None;
         }
 
@@ -947,8 +947,8 @@ impl Vcs for GitSystem {
                             });
                         }
                     }
-                } else if line.starts_with("u ") {
-                    if let Some(rest) = line.get(2..) {
+                } else if line.starts_with("u ")
+                    && let Some(rest) = line.get(2..) {
                         // Porcelain v2 unmerged:
                         // u XY sub m1 m2 m3 mW h1 h2 h3 <path>
                         let parts: Vec<&str> = rest.splitn(10, ' ').collect();
@@ -966,7 +966,6 @@ impl Vcs for GitSystem {
                             hunks: Vec::new(),
                         });
                     }
-                }
             }
 
             (files, conflicted_paths)
