@@ -21,6 +21,149 @@ pub struct GitSystem {
 }
 
 impl GitSystem {
+    fn untracked_diff_empty_path() -> &'static str {
+        if cfg!(windows) { "NUL" } else { "/dev/null" }
+    }
+
+    fn parse_porcelain_path(raw: &str) -> String {
+        let s = raw.trim();
+        if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+            return Self::unescape_c_style_path(&s[1..s.len() - 1]);
+        }
+        s.to_string()
+    }
+
+    fn unescape_c_style_path(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch != '\\' {
+                out.push(ch);
+                continue;
+            }
+
+            let Some(next) = chars.next() else {
+                out.push('\\');
+                break;
+            };
+
+            match next {
+                '\\' => out.push('\\'),
+                '"' => out.push('"'),
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                // Git quotePath uses octal escapes for non-printable bytes.
+                d @ '0'..='7' => {
+                    let mut val = (d as u8 - b'0') as u32;
+                    for _ in 0..2 {
+                        let Some(peek) = chars.peek().copied() else {
+                            break;
+                        };
+                        if ('0'..='7').contains(&peek) {
+                            let _ = chars.next();
+                            val = (val * 8) + ((peek as u8 - b'0') as u32);
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(decoded) = char::from_u32(val) {
+                        out.push(decoded);
+                    }
+                }
+                other => out.push(other),
+            }
+        }
+        out
+    }
+
+    fn synthetic_untracked_patch(abs: &Path, display_path: &str) -> Option<Vec<String>> {
+        let bytes = std::fs::read(abs).ok()?;
+        let text = if bytes.contains(&0) {
+            match Self::decode_utf16_text(&bytes) {
+                Some(s) => std::borrow::Cow::Owned(s),
+                None => {
+                    return Some(vec![format!(
+                        "Binary files {} and {} differ",
+                        Self::untracked_diff_empty_path(),
+                        display_path
+                    )]);
+                }
+            }
+        } else {
+            String::from_utf8_lossy(&bytes)
+        };
+        let mut lines = vec![
+            format!("diff --git a/{0} b/{0}", display_path),
+            "new file mode 100644".to_string(),
+            "--- /dev/null".to_string(),
+            format!("+++ b/{display_path}"),
+        ];
+
+        let content_lines: Vec<&str> = text.lines().collect();
+        if !content_lines.is_empty() {
+            lines.push(format!("@@ -0,0 +1,{} @@", content_lines.len()));
+            for line in content_lines {
+                lines.push(format!("+{line}"));
+            }
+        }
+        Some(lines)
+    }
+
+    fn decode_utf16_text(bytes: &[u8]) -> Option<String> {
+        if bytes.len() < 2 || bytes.len() % 2 != 0 {
+            return None;
+        }
+
+        #[derive(Clone, Copy)]
+        enum Endian {
+            Le,
+            Be,
+        }
+
+        let endian = if bytes.starts_with(&[0xFF, 0xFE]) {
+            Endian::Le
+        } else if bytes.starts_with(&[0xFE, 0xFF]) {
+            Endian::Be
+        } else {
+            let even_zeros = bytes.iter().step_by(2).filter(|b| **b == 0).count();
+            let odd_zeros = bytes.iter().skip(1).step_by(2).filter(|b| **b == 0).count();
+            if odd_zeros > even_zeros {
+                Endian::Le
+            } else if even_zeros > odd_zeros {
+                Endian::Be
+            } else {
+                return None;
+            }
+        };
+
+        let mut u16s = Vec::with_capacity(bytes.len() / 2);
+        let mut i = 0usize;
+        while i + 1 < bytes.len() {
+            let hi = bytes[i];
+            let lo = bytes[i + 1];
+            let u = match endian {
+                Endian::Le => u16::from_le_bytes([hi, lo]),
+                Endian::Be => u16::from_be_bytes([hi, lo]),
+            };
+            u16s.push(u);
+            i += 2;
+        }
+
+        if !u16s.is_empty() && (u16s[0] == 0xFEFF || u16s[0] == 0xFFFE) {
+            u16s.remove(0);
+        }
+
+        let mut out = String::new();
+        for ch in std::char::decode_utf16(u16s.into_iter()) {
+            match ch {
+                Ok(c) => out.push(c),
+                Err(_) => return None,
+            }
+        }
+        Some(out)
+    }
+
     fn path_str(p: &Path) -> Result<&str> {
         p.to_str().ok_or_else(|| {
             VcsError::Io(std::io::Error::new(
@@ -701,10 +844,10 @@ impl Vcs for GitSystem {
 
             for line in out.lines() {
                 if line.starts_with("? ") {
-                    // Untracked; token after "?" is the path
-                    if let Some(path) = line.split_whitespace().last() {
+                    if let Some(path) = line.strip_prefix("? ") {
+                        let path = GitSystem::parse_porcelain_path(path);
                         files.push(FileEntry {
-                            path: path.to_string(),
+                            path,
                             old_path: None,
                             status: "?".into(),
                             staged: false,
@@ -714,11 +857,19 @@ impl Vcs for GitSystem {
                     }
                 } else if line.starts_with("1 ") || line.starts_with("2 ") {
                     // Ordinary changed entry: "1 XY ... <path>" or rename/copy record "2 XY ... <path>"
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() < 2 {
+                    let Some(rest) = line.get(2..) else {
+                        continue;
+                    };
+                    // Porcelain v2:
+                    // 1: XY sub mH mI mW hH hI <path>
+                    // 2: XY sub mH mI mW hH hI Xscore <path>\t<orig-path>
+                    let field_count = if line.starts_with("2 ") { 9 } else { 8 };
+                    let parts: Vec<&str> = rest.splitn(field_count, ' ').collect();
+                    if parts.len() < field_count {
                         continue;
                     }
-                    let xy = parts.get(1).copied().unwrap_or("");
+
+                    let xy = parts.first().copied().unwrap_or("");
                     let mut xy_chars = xy.chars();
                     let x = xy_chars.next().unwrap_or(' ');
                     let y = xy_chars.next().unwrap_or(' ');
@@ -727,31 +878,27 @@ impl Vcs for GitSystem {
                     if line.starts_with("2 ") {
                         // Rename/copy record includes two paths at the end.
                         // Determine which one is the "new" path by checking for existence when possible.
-                        if parts.len() > 2 + 1 + 1 {
-                            let sub = parts.get(2).copied().unwrap_or("");
+                        if let Some(path_pair) = parts.get(8) {
+                            let sub = parts.get(1).copied().unwrap_or("");
                             let status = if sub.to_ascii_uppercase().starts_with('C') {
                                 "C"
                             } else {
                                 "R"
                             }
                             .to_string();
-                            let a = parts
-                                .get(parts.len().saturating_sub(2))
-                                .copied()
-                                .unwrap_or("");
-                            let b = parts
-                                .get(parts.len().saturating_sub(1))
-                                .copied()
-                                .unwrap_or("");
-                            let a_exists = workdir.join(a).exists();
-                            let b_exists = workdir.join(b).exists();
+                            let (a_raw, b_raw) =
+                                path_pair.split_once('\t').unwrap_or((path_pair, ""));
+                            let a = GitSystem::parse_porcelain_path(a_raw);
+                            let b = GitSystem::parse_porcelain_path(b_raw);
+                            let a_exists = workdir.join(&a).exists();
+                            let b_exists = workdir.join(&b).exists();
                             let (new_path, old_path) = if a_exists && !b_exists {
-                                (a.to_string(), Some(b.to_string()))
+                                (a.clone(), Some(b.clone()))
                             } else if b_exists && !a_exists {
-                                (b.to_string(), Some(a.to_string()))
+                                (b.clone(), Some(a.clone()))
                             } else {
                                 // Fallback to porcelain v2 convention: last token is the source/orig path.
-                                (a.to_string(), Some(b.to_string()))
+                                (a.clone(), Some(b.clone()))
                             };
                             files.push(FileEntry {
                                 path: new_path,
@@ -779,9 +926,9 @@ impl Vcs for GitSystem {
                         }
                         .to_string();
 
-                        if let Some(path) = parts.last() {
+                        if let Some(path) = parts.get(7) {
                             files.push(FileEntry {
-                                path: (*path).to_string(),
+                                path: GitSystem::parse_porcelain_path(path),
                                 old_path: None,
                                 status,
                                 staged,
@@ -791,9 +938,14 @@ impl Vcs for GitSystem {
                         }
                     }
                 } else if line.starts_with("u ") {
-                    // conflicted; last token is path
-                    if let Some(path) = line.split_whitespace().last() {
-                        let path = path.to_string();
+                    if let Some(rest) = line.get(2..) {
+                        // Porcelain v2 unmerged:
+                        // u XY sub m1 m2 m3 mW h1 h2 h3 <path>
+                        let parts: Vec<&str> = rest.splitn(10, ' ').collect();
+                        if parts.len() < 10 {
+                            continue;
+                        }
+                        let path = GitSystem::parse_porcelain_path(parts[9]);
                         conflicted_paths.push(path.clone());
                         files.push(FileEntry {
                             path,
@@ -1032,7 +1184,9 @@ impl Vcs for GitSystem {
         } else {
             self.workdir.join(path)
         };
-        if abs.exists() {
+        if abs.is_file() {
+            let abs_str = Self::path_str(&abs)?;
+            let null_src = Self::untracked_diff_empty_path();
             let out_noindex = Self::run_git_capture_any_exit(
                 Some(&self.workdir),
                 [
@@ -1041,13 +1195,51 @@ impl Vcs for GitSystem {
                     "--unified=3",
                     "--no-index",
                     "--",
-                    "/dev/null",
-                    Self::path_str(&abs)?,
+                    null_src,
+                    abs_str,
                 ],
             )?;
             let sn = out_noindex.trim_end();
             if !sn.is_empty() {
                 return Ok(sn.lines().map(|l| l.to_string()).collect());
+            }
+
+            // Some environments may not expose platform null devices to `git`.
+            // Retry against a temporary empty file to force added-file patch output.
+            let tmp_empty = std::env::temp_dir().join("openvcs-empty-diff-file");
+            if !tmp_empty.exists() {
+                let _ = std::fs::write(&tmp_empty, b"");
+            }
+            if let Ok(tmp_str) = Self::path_str(&tmp_empty) {
+                let out_noindex_tmp = Self::run_git_capture_any_exit(
+                    Some(&self.workdir),
+                    [
+                        "diff",
+                        "--no-color",
+                        "--unified=3",
+                        "--no-index",
+                        "--",
+                        tmp_str,
+                        abs_str,
+                    ],
+                )?;
+                let st = out_noindex_tmp.trim_end();
+                if !st.is_empty() {
+                    return Ok(st.lines().map(|l| l.to_string()).collect());
+                }
+            }
+
+            // Last-resort fallback: synthesize a patch directly from file contents.
+            let display_path = if path.is_absolute() {
+                abs.strip_prefix(&self.workdir)
+                    .ok()
+                    .and_then(|p| p.to_str())
+                    .unwrap_or(abs_str)
+            } else {
+                p
+            };
+            if let Some(synth) = Self::synthetic_untracked_patch(&abs, display_path) {
+                return Ok(synth);
             }
         }
 
@@ -1582,10 +1774,7 @@ impl GitSystem {
     }
 
     pub fn lfs_is_available(&self) -> Result<bool> {
-        log::info!(
-            "git-system: lfs_is_available in {}",
-            self.workdir.display()
-        );
+        log::info!("git-system: lfs_is_available in {}", self.workdir.display());
         match Self::run_git(Some(&self.workdir), ["lfs", "version"]) {
             Ok(()) => Ok(true),
             Err(err) => {
@@ -1606,10 +1795,11 @@ impl GitSystem {
             args.push("--cached");
         }
         let out = Self::run_git_capture(Some(&self.workdir), args)?;
-        let value: serde_json::Value = serde_json::from_str(&out).map_err(|e| VcsError::Backend {
-            backend: GIT_SYSTEM_ID,
-            msg: format!("git lfs locks parse failed: {e}"),
-        })?;
+        let value: serde_json::Value =
+            serde_json::from_str(&out).map_err(|e| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: format!("git lfs locks parse failed: {e}"),
+            })?;
         let raws: Vec<LfsLockRaw> = if value.is_array() {
             log::debug!("git-system: lfs_locks json array response");
             serde_json::from_value(value).map_err(|e| VcsError::Backend {
@@ -1618,12 +1808,11 @@ impl GitSystem {
             })?
         } else if value.get("locks").is_some() {
             log::debug!("git-system: lfs_locks json object response");
-            let parsed: LfsLocksResponse = serde_json::from_value(value).map_err(|e| {
-                VcsError::Backend {
+            let parsed: LfsLocksResponse =
+                serde_json::from_value(value).map_err(|e| VcsError::Backend {
                     backend: GIT_SYSTEM_ID,
                     msg: format!("git lfs locks parse failed: {e}"),
-                }
-            })?;
+                })?;
             parsed.locks
         } else {
             Vec::new()
@@ -1635,16 +1824,13 @@ impl GitSystem {
 
     pub fn lfs_lock(&self, path: &Path) -> Result<LfsLock> {
         let p = Self::path_str(path)?;
-        log::info!(
-            "git-system: lfs_lock {} in {}",
-            p,
-            self.workdir.display()
-        );
+        log::info!("git-system: lfs_lock {} in {}", p, self.workdir.display());
         let out = Self::run_git_capture(Some(&self.workdir), ["lfs", "lock", "--json", "--", p])?;
-        let parsed: LfsLockResponse = serde_json::from_str(&out).map_err(|e| VcsError::Backend {
-            backend: GIT_SYSTEM_ID,
-            msg: format!("git lfs lock parse failed: {e}"),
-        })?;
+        let parsed: LfsLockResponse =
+            serde_json::from_str(&out).map_err(|e| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: format!("git lfs lock parse failed: {e}"),
+            })?;
         let lock = parsed.lock.ok_or_else(|| VcsError::Backend {
             backend: GIT_SYSTEM_ID,
             msg: "git lfs lock response missing lock".to_string(),

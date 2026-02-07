@@ -1009,11 +1009,28 @@ impl Git {
             let mut opts = g::DiffOptions::new();
             opts.pathspec(rel_str.as_ref());
             opts.context_lines(3);
-            opts.include_untracked(true).recurse_untracked_dirs(true);
+            opts.include_untracked(true)
+                .recurse_untracked_dirs(true)
+                .show_untracked_content(true);
 
             // 1) Unstaged: index → workdir
             let diff_unstaged = repo.diff_index_to_workdir(None, Some(&mut opts))?;
             let mut lines = collect_patch_lines(&diff_unstaged)?;
+            if !lines.is_empty() {
+                return Ok(lines);
+            }
+
+            // Fallback for repos/environments where index→workdir omits untracked patch bodies.
+            let mut opts_workdir = g::DiffOptions::new();
+            opts_workdir
+                .pathspec(rel_str.as_ref())
+                .context_lines(3)
+                .include_untracked(true)
+                .recurse_untracked_dirs(true)
+                .show_untracked_content(true);
+            let diff_workdir =
+                repo.diff_tree_to_workdir_with_index(None, Some(&mut opts_workdir))?;
+            lines = collect_patch_lines(&diff_workdir)?;
             if !lines.is_empty() {
                 return Ok(lines);
             }
