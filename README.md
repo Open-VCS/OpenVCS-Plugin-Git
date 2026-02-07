@@ -1,6 +1,10 @@
 This directory contains the built-in Git plugin bundle for OpenVCS: the plugin
 manifest plus the Rust crates and WASI module that implement Git backends.
 
+[![Nightly](https://github.com/Open-VCS/OpenVCS-Plugin-Git/actions/workflows/nightly.yml/badge.svg?branch=Dev)](https://github.com/Open-VCS/OpenVCS-Plugin-Git/actions/workflows/nightly.yml)
+[![Dev](https://github.com/Open-VCS/OpenVCS-Plugin-Git/actions/workflows/ci.yml/badge.svg?branch=Dev)](https://github.com/Open-VCS/OpenVCS-Plugin-Git/actions/workflows/ci.yml)
+[![Stable](https://github.com/Open-VCS/OpenVCS-Plugin-Git/actions/workflows/release.yml/badge.svg?branch=Stable)](https://github.com/Open-VCS/OpenVCS-Plugin-Git/actions/workflows/release.yml)
+
 **Quick Links**
 - Plugin manifest: `openvcs.plugin.json`:1
 - Plugin module entry: `src/bin/openvcs-git-plugin.rs`:1
