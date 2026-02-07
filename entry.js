@@ -1159,8 +1159,14 @@ try {
     refreshLocks();
   });
   window.addEventListener('app:repo-selected', () => {
+    closeLfsLocksModal();
+    closeSubmodulesModal();
     refreshLfsAvailability();
     refreshLocks();
+  });
+  window.addEventListener('app:repo-will-switch', () => {
+    closeLfsLocksModal();
+    closeSubmodulesModal();
   });
   document.addEventListener('contextmenu', (event) => {
     const target = event.target;
