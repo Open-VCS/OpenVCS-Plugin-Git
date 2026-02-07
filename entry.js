@@ -155,6 +155,30 @@ const SubmoduleModalHtml = `
 </div>
 `.trim();
 
+const SubmoduleRemoveConfirmModalHtml = `
+<div class="modal submodule-remove-modal" id="submodule-remove-modal" aria-hidden="true">
+  <div class="dialog sheet" role="dialog" aria-modal="true" aria-labelledby="submodule-remove-title">
+    <div class="sheet-head">
+      <h3 id="submodule-remove-title" style="margin:0">Remove Submodule</h3>
+      <button class="icon close" type="button" data-close aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="panel-form">
+        <div class="group">
+          <div class="modal-note">This removes the submodule mapping and stages deletion.</div>
+          <div id="submodule-remove-path" style="font-weight:700; word-break:break-all;"></div>
+        </div>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button class="tbtn" type="button" id="submodule-remove-cancel">Cancel</button>
+      <button class="tbtn danger" type="button" id="submodule-remove-confirm">Remove</button>
+    </div>
+  </div>
+  <div class="backdrop" data-close></div>
+</div>
+`.trim();
+
 const LfsLocksModalHtml = `
 <div class="modal lfs-locks-modal" id="lfs-locks-modal" aria-hidden="true">
   <div class="dialog sheet" role="dialog" aria-modal="true" aria-labelledby="lfs-locks-title">
@@ -319,9 +343,11 @@ try {
   let lockMap = new Map();
   let lfsLocksModalOverflow = null;
   let submodulesModalOverflow = null;
+  let submoduleRemoveModalOverflow = null;
   let forceUnlockHeld = false;
   let lastLocksSignature = '';
   let lastSubmodulesSignature = '';
+  let pendingSubmoduleRemovePath = '';
   const updateLockMarks = (locks) => {
     ensureLockStyle();
     const map = new Map();
@@ -790,7 +816,7 @@ try {
         <button class="tbtn" type="button" data-action="sub-open" data-path="${path}">Open</button>
         <button class="tbtn" type="button" data-action="sub-update" data-path="${path}">Update</button>
         <button class="tbtn" type="button" data-action="sub-sync" data-path="${path}">Sync</button>
-        <button class="tbtn danger" type="button" data-action="sub-remove" data-path="${path}" data-confirm-remove="0">Remove</button>
+        <button class="tbtn danger" type="button" data-action="sub-remove" data-path="${path}">Remove</button>
       `;
       row.appendChild(left);
       row.appendChild(actions);
@@ -867,6 +893,65 @@ try {
     }
   };
 
+  const closeSubmoduleRemoveModal = () => {
+    const modal = document.getElementById('submodule-remove-modal');
+    if (!modal) return;
+    if (modal.getAttribute('aria-hidden') !== 'true') {
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    pendingSubmoduleRemovePath = '';
+    if (submoduleRemoveModalOverflow !== null) {
+      document.body.style.overflow = submoduleRemoveModalOverflow;
+      submoduleRemoveModalOverflow = null;
+    }
+  };
+
+  const ensureSubmoduleRemoveModal = () => {
+    if (document.getElementById('submodule-remove-modal')) return;
+    const root = document.getElementById('modals-root') || document.body;
+    root.insertAdjacentHTML('beforeend', SubmoduleRemoveConfirmModalHtml);
+    const modal = document.getElementById('submodule-remove-modal');
+    if (!modal || modal.__wired) return;
+    modal.addEventListener('click', (evt) => {
+      const target = evt.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.closest('[data-close]') || target.id === 'submodule-remove-cancel') {
+        closeSubmoduleRemoveModal();
+      }
+    });
+    modal.querySelector('#submodule-remove-confirm')?.addEventListener('click', async () => {
+      const path = String(pendingSubmoduleRemovePath || '').trim();
+      if (!path) return;
+      try {
+        await callSubmodule('git.submodule.remove', { submodule_path: path, force: false });
+        window.OpenVCS?.notify?.(`Removed submodule ${path}`);
+        closeSubmoduleRemoveModal();
+        window.dispatchEvent(new CustomEvent('app:status-updated'));
+        await refreshSubmodulesModal();
+      } catch (e) {
+        window.OpenVCS?.notify?.(`Submodule remove failed: ${String(e || '').trim() || 'unknown error'}`);
+      }
+    });
+    modal.__wired = true;
+  };
+
+  const openSubmoduleRemoveModal = (path) => {
+    const p = String(path || '').trim();
+    if (!p) return;
+    ensureSubmoduleRemoveModal();
+    const modal = document.getElementById('submodule-remove-modal');
+    if (!modal) return;
+    pendingSubmoduleRemovePath = p;
+    const pathEl = modal.querySelector('#submodule-remove-path');
+    if (pathEl) pathEl.textContent = p;
+    if (!modal.hasAttribute('aria-hidden')) modal.setAttribute('aria-hidden', 'true');
+    modal.setAttribute('aria-hidden', 'false');
+    if (submoduleRemoveModalOverflow === null) {
+      submoduleRemoveModalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+    }
+  };
+
   const ensureSubmodulesModal = () => {
     if (document.getElementById('submodules-modal')) return;
     ensureLockStyle();
@@ -894,26 +979,8 @@ try {
           await callSubmodule('git.submodule.sync', { recursive: true, paths: [path] });
           window.OpenVCS?.notify?.(`Synced submodule ${path}`);
         } else if (action === 'sub-remove' && path) {
-          const armedUntil = Number(btn.getAttribute('data-confirm-remove') || '0');
-          const now = Date.now();
-          if (!armedUntil || now > armedUntil) {
-            const until = now + 3500;
-            btn.setAttribute('data-confirm-remove', String(until));
-            btn.textContent = 'Confirm Remove';
-            btn.classList.add('danger');
-            window.OpenVCS?.notify?.(`Click Confirm Remove again to remove ${path}`);
-            window.setTimeout(() => {
-              const cur = Number(btn.getAttribute('data-confirm-remove') || '0');
-              if (cur !== until) return;
-              btn.setAttribute('data-confirm-remove', '0');
-              btn.textContent = 'Remove';
-            }, 3600);
-            return;
-          }
-          btn.setAttribute('data-confirm-remove', '0');
-          btn.textContent = 'Remove';
-          await callSubmodule('git.submodule.remove', { submodule_path: path, force: false });
-          window.OpenVCS?.notify?.(`Removed submodule ${path}`);
+          openSubmoduleRemoveModal(path);
+          return;
         } else if (action === 'sub-open' && path) {
           const base = await getRepoPath();
           const absPath = joinRepoPath(base, path);
@@ -1224,12 +1291,14 @@ try {
   window.addEventListener('app:repo-selected', () => {
     closeLfsLocksModal();
     closeSubmodulesModal();
+    closeSubmoduleRemoveModal();
     refreshLfsAvailability();
     refreshLocks();
   });
   window.addEventListener('app:repo-will-switch', () => {
     closeLfsLocksModal();
     closeSubmodulesModal();
+    closeSubmoduleRemoveModal();
   });
   document.addEventListener('contextmenu', (event) => {
     const target = event.target;
