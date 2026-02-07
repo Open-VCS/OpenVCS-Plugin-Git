@@ -948,24 +948,25 @@ impl Vcs for GitSystem {
                         }
                     }
                 } else if line.starts_with("u ")
-                    && let Some(rest) = line.get(2..) {
-                        // Porcelain v2 unmerged:
-                        // u XY sub m1 m2 m3 mW h1 h2 h3 <path>
-                        let parts: Vec<&str> = rest.splitn(10, ' ').collect();
-                        if parts.len() < 10 {
-                            continue;
-                        }
-                        let path = GitSystem::parse_porcelain_path(parts[9]);
-                        conflicted_paths.push(path.clone());
-                        files.push(FileEntry {
-                            path,
-                            old_path: None,
-                            status: "U".into(),
-                            staged: false,
-                            resolved_conflict: false,
-                            hunks: Vec::new(),
-                        });
+                    && let Some(rest) = line.get(2..)
+                {
+                    // Porcelain v2 unmerged:
+                    // u XY sub m1 m2 m3 mW h1 h2 h3 <path>
+                    let parts: Vec<&str> = rest.splitn(10, ' ').collect();
+                    if parts.len() < 10 {
+                        continue;
                     }
+                    let path = GitSystem::parse_porcelain_path(parts[9]);
+                    conflicted_paths.push(path.clone());
+                    files.push(FileEntry {
+                        path,
+                        old_path: None,
+                        status: "U".into(),
+                        staged: false,
+                        resolved_conflict: false,
+                        hunks: Vec::new(),
+                    });
+                }
             }
 
             (files, conflicted_paths)
