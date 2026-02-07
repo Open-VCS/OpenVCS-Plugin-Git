@@ -201,6 +201,12 @@ try {
   const getRepoPath = async () => {
     try { return await window.OpenVCS?.invoke?.('current_repo_path'); } catch { return null; }
   };
+  const joinRepoPath = (base, rel) => {
+    const b = String(base || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    const r = String(rel || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!b || !r) return '';
+    return `${b}/${r}`;
+  };
 
   const getCfg = async () => {
     try { return await window.OpenVCS?.invoke?.('get_global_settings'); } catch { return null; }
@@ -846,7 +852,13 @@ try {
           await callSubmodule('git.submodule.remove', { submodule_path: path, force: false });
           window.OpenVCS?.notify?.(`Removed submodule ${path}`);
         } else if (action === 'sub-open' && path) {
-          await window.OpenVCS?.invoke?.('open_repo_file', { path });
+          const base = await getRepoPath();
+          const absPath = joinRepoPath(base, path);
+          if (!absPath) {
+            window.OpenVCS?.notify?.('No repository selected');
+            return;
+          }
+          await window.OpenVCS?.invoke?.('open_repo', { path: absPath, backend_id: 'git' });
         } else {
           return;
         }
