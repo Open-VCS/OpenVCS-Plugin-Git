@@ -137,6 +137,7 @@ const SubmoduleModalHtml = `
         <div class="group"><div class="modal-note" id="submodules-state"></div></div>
         <div class="group">
           <label>Repository submodules</label>
+          <div class="modal-note plugin-loading hidden" id="submodules-loading"><span class="spinner" aria-hidden="true"></span><span>Loading submodules…</span></div>
           <div class="submodules-list" id="submodules-list"></div>
           <div class="modal-note" id="submodules-empty" hidden>No submodules found.</div>
         </div>
@@ -181,6 +182,7 @@ const LfsLocksModalHtml = `
         </div>
         <div class="group">
           <label>Current locks</label>
+          <div class="modal-note plugin-loading hidden" id="lfs-locks-loading"><span class="spinner" aria-hidden="true"></span><span>Loading LFS locks…</span></div>
           <div class="lfs-locks-list" id="lfs-locks-list"></div>
           <div class="modal-note" id="lfs-locks-empty" hidden>No locks found.</div>
         </div>
@@ -277,6 +279,15 @@ try {
       .submodule-meta{ color:var(--muted); font-size:.85rem; display:flex; flex-wrap:wrap; gap:.5rem; }
       .submodule-actions{ display:flex; gap:.4rem; flex-wrap:wrap; justify-content:flex-end; }
       .submodule-chip{ display:inline-flex; align-items:center; gap:.25rem; padding:.15rem .4rem; border-radius:999px; border:1px solid var(--border); background:var(--surface); font-size:.78rem; }
+      .plugin-loading{ display:flex; align-items:center; gap:.5rem; color:var(--muted); }
+      .plugin-loading.hidden{ display:none !important; }
+      .plugin-loading .spinner{
+        width:12px; height:12px; border-radius:999px;
+        border:2px solid color-mix(in oklab, var(--muted) 55%, transparent);
+        border-top-color: var(--accent);
+        animation: pluginSpin .9s linear infinite;
+      }
+      @keyframes pluginSpin{ from{ transform:rotate(0deg); } to{ transform:rotate(360deg); } }
     `;
     document.head.appendChild(style);
   };
@@ -628,26 +639,39 @@ try {
     controls.forEach((el) => { el.disabled = disable; });
   };
 
+  const setLfsLocksLoading = (loading) => {
+    const modal = document.getElementById('lfs-locks-modal');
+    if (!modal) return;
+    modal.setAttribute('aria-busy', loading ? 'true' : 'false');
+    const loadingEl = modal.querySelector('#lfs-locks-loading');
+    if (loadingEl) loadingEl.classList.toggle('hidden', !loading);
+  };
+
   const refreshLfsLocksModal = async () => {
-    const path = await getRepoPath();
-    if (!path) {
-      setLfsLocksModalState({ available: false, message: 'Select a repository to manage Git LFS locks.' });
-      applyLocks([]);
-      return;
+    setLfsLocksLoading(true);
+    try {
+      const path = await getRepoPath();
+      if (!path) {
+        setLfsLocksModalState({ available: false, message: 'Select a repository to manage Git LFS locks.' });
+        applyLocks([]);
+        return;
+      }
+      const cfg = await getCfg();
+      if (cfg?.lfs?.enabled === false) {
+        setLfsLocksModalState({ available: false, message: 'Enable Git LFS integration in Settings to manage locks.' });
+        applyLocks([]);
+        return;
+      }
+      if (!lfsAvailable) {
+        setLfsLocksModalState({ available: false, message: 'Git LFS is not available for this repository.' });
+        applyLocks([]);
+        return;
+      }
+      setLfsLocksModalState({ available: true, message: '' });
+      await refreshLocks();
+    } finally {
+      setLfsLocksLoading(false);
     }
-    const cfg = await getCfg();
-    if (cfg?.lfs?.enabled === false) {
-      setLfsLocksModalState({ available: false, message: 'Enable Git LFS integration in Settings to manage locks.' });
-      applyLocks([]);
-      return;
-    }
-    if (!lfsAvailable) {
-      setLfsLocksModalState({ available: false, message: 'Git LFS is not available for this repository.' });
-      applyLocks([]);
-      return;
-    }
-    setLfsLocksModalState({ available: true, message: '' });
-    await refreshLocks();
   };
 
   const openLfsLocksModal = async () => {
@@ -775,6 +799,14 @@ try {
     controls.forEach((el) => { el.disabled = disable; });
   };
 
+  const setSubmodulesLoading = (loading) => {
+    const modal = document.getElementById('submodules-modal');
+    if (!modal) return;
+    modal.setAttribute('aria-busy', loading ? 'true' : 'false');
+    const loadingEl = modal.querySelector('#submodules-loading');
+    if (loadingEl) loadingEl.classList.toggle('hidden', !loading);
+  };
+
   const fetchSubmodules = async () => {
     const available = await callSubmodule('git.submodule.is_available');
     if (!available) return { available: false, items: [] };
@@ -783,6 +815,7 @@ try {
   };
 
   const refreshSubmodulesModal = async () => {
+    setSubmodulesLoading(true);
     try {
       const path = await getRepoPath();
       if (!path) {
@@ -805,6 +838,8 @@ try {
     } catch (e) {
       setSubmodulesModalState({ available: false, message: `Failed to load submodules: ${String(e || '').trim() || 'unknown error'}` });
       renderSubmoduleRows([]);
+    } finally {
+      setSubmodulesLoading(false);
     }
   };
 
