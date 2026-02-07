@@ -790,7 +790,7 @@ try {
         <button class="tbtn" type="button" data-action="sub-open" data-path="${path}">Open</button>
         <button class="tbtn" type="button" data-action="sub-update" data-path="${path}">Update</button>
         <button class="tbtn" type="button" data-action="sub-sync" data-path="${path}">Sync</button>
-        <button class="tbtn danger" type="button" data-action="sub-remove" data-path="${path}">Remove</button>
+        <button class="tbtn danger" type="button" data-action="sub-remove" data-path="${path}" data-confirm-remove="0">Remove</button>
       `;
       row.appendChild(left);
       row.appendChild(actions);
@@ -894,8 +894,24 @@ try {
           await callSubmodule('git.submodule.sync', { recursive: true, paths: [path] });
           window.OpenVCS?.notify?.(`Synced submodule ${path}`);
         } else if (action === 'sub-remove' && path) {
-          const ok = window.confirm(`Remove submodule ${path}? This removes mapping and stages deletion.`);
-          if (!ok) return;
+          const armedUntil = Number(btn.getAttribute('data-confirm-remove') || '0');
+          const now = Date.now();
+          if (!armedUntil || now > armedUntil) {
+            const until = now + 3500;
+            btn.setAttribute('data-confirm-remove', String(until));
+            btn.textContent = 'Confirm Remove';
+            btn.classList.add('danger');
+            window.OpenVCS?.notify?.(`Click Confirm Remove again to remove ${path}`);
+            window.setTimeout(() => {
+              const cur = Number(btn.getAttribute('data-confirm-remove') || '0');
+              if (cur !== until) return;
+              btn.setAttribute('data-confirm-remove', '0');
+              btn.textContent = 'Remove';
+            }, 3600);
+            return;
+          }
+          btn.setAttribute('data-confirm-remove', '0');
+          btn.textContent = 'Remove';
           await callSubmodule('git.submodule.remove', { submodule_path: path, force: false });
           window.OpenVCS?.notify?.(`Removed submodule ${path}`);
         } else if (action === 'sub-open' && path) {
