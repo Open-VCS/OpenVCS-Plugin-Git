@@ -681,7 +681,10 @@ impl Drop for EnvGuard {
     }
 }
 
-fn git_lfs_fetch_all_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn git_lfs_fetch_all_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
         path: String,
@@ -690,7 +693,8 @@ fn git_lfs_fetch_all_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_j
         #[serde(default)]
         lfs: Option<LfsCfg>,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.fetch_all params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.fetch_all params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.fetch_all backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -698,7 +702,10 @@ fn git_lfs_fetch_all_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_j
         GitBackend::System => {
             #[cfg(feature = "system-git")]
             {
-                emit_trace(ctx, format!("git.lfs.fetch_all start backend={}", p.git_backend));
+                emit_trace(
+                    ctx,
+                    format!("git.lfs.fetch_all start backend={}", p.git_backend),
+                );
                 let _guard = EnvGuard::apply_lfs(p.lfs.unwrap_or_default())
                     .map_err(|e| warn_err(ctx, "git.lfs.fetch_all env", e))?;
                 let repo = GitSystem::open(&repo_path)
@@ -725,7 +732,10 @@ fn git_lfs_fetch_all_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_j
     }
 }
 
-fn git_lfs_pull_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn git_lfs_pull_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
         path: String,
@@ -734,7 +744,8 @@ fn git_lfs_pull_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::
         #[serde(default)]
         lfs: Option<LfsCfg>,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.pull params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.pull params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.pull backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -769,7 +780,10 @@ fn git_lfs_pull_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::
     }
 }
 
-fn git_lfs_prune_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn git_lfs_prune_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
         path: String,
@@ -778,7 +792,8 @@ fn git_lfs_prune_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json:
         #[serde(default)]
         lfs: Option<LfsCfg>,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.prune params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.prune params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.prune backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -786,7 +801,10 @@ fn git_lfs_prune_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json:
         GitBackend::System => {
             #[cfg(feature = "system-git")]
             {
-                emit_trace(ctx, format!("git.lfs.prune start backend={}", p.git_backend));
+                emit_trace(
+                    ctx,
+                    format!("git.lfs.prune start backend={}", p.git_backend),
+                );
                 let _guard = EnvGuard::apply_lfs(p.lfs.unwrap_or_default())
                     .map_err(|e| warn_err(ctx, "git.lfs.prune env", e))?;
                 let repo = GitSystem::open(&repo_path)
@@ -813,7 +831,10 @@ fn git_lfs_prune_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json:
     }
 }
 
-fn git_lfs_track_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn git_lfs_track_paths_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
         path: String,
@@ -824,7 +845,8 @@ fn git_lfs_track_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde
         #[serde(default)]
         paths: Vec<String>,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.track_paths params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.track_paths params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.track_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -841,7 +863,10 @@ fn git_lfs_track_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde
                         list.len()
                     ),
                 );
-                emit_info(ctx, format!("git.lfs.track_paths start count={}", list.len()));
+                emit_info(
+                    ctx,
+                    format!("git.lfs.track_paths start count={}", list.len()),
+                );
                 let _guard = EnvGuard::apply_lfs(p.lfs.unwrap_or_default())
                     .map_err(|e| warn_err(ctx, "git.lfs.track_paths env", e))?;
                 let repo = GitSystem::open(&repo_path)
@@ -868,7 +893,10 @@ fn git_lfs_track_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde
     }
 }
 
-fn git_lfs_untrack_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn git_lfs_untrack_paths_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
         path: String,
@@ -879,7 +907,8 @@ fn git_lfs_untrack_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<ser
         #[serde(default)]
         paths: Vec<String>,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.untrack_paths params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.untrack_paths params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.untrack_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -926,7 +955,10 @@ fn git_lfs_untrack_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<ser
     }
 }
 
-fn git_lfs_is_tracked_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn git_lfs_is_tracked_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
         path: String,
@@ -934,7 +966,8 @@ fn git_lfs_is_tracked_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_
         git_backend: String,
         file: String,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.is_tracked params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.is_tracked params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.is_tracked backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -948,8 +981,7 @@ fn git_lfs_is_tracked_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_
                     ctx,
                     format!(
                         "git.lfs.is_tracked request backend={} file={}",
-                        p.git_backend,
-                        file_label
+                        p.git_backend, file_label
                     ),
                 );
                 let repo = GitSystem::open(&repo_path)
@@ -973,7 +1005,10 @@ fn git_lfs_is_tracked_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_
     }
 }
 
-fn git_lfs_tracked_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn git_lfs_tracked_paths_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
         path: String,
@@ -982,7 +1017,8 @@ fn git_lfs_tracked_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<ser
         #[serde(default)]
         paths: Vec<String>,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.tracked_paths params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.tracked_paths params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.tracked_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -1022,7 +1058,9 @@ fn git_lfs_tracked_paths_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<ser
             }
             #[cfg(not(feature = "system-git"))]
             {
-                Err(PluginError::message("system Git backend not compiled into plugin"))
+                Err(PluginError::message(
+                    "system Git backend not compiled into plugin",
+                ))
             }
         }
         GitBackend::Libgit2 => ok(Vec::<String>::new()),
@@ -1033,7 +1071,10 @@ fn default_true() -> bool {
     true
 }
 
-fn git_lfs_locks_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+fn git_lfs_locks_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
         path: String,
@@ -1044,7 +1085,8 @@ fn git_lfs_locks_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json:
         #[serde(default = "default_true")]
         cached: bool,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.locks params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.locks params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.locks backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -1102,7 +1144,8 @@ fn git_lfs_lock_paths_rpc(
         #[serde(default)]
         paths: Vec<String>,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.lock_paths params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.lock_paths params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.lock_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -1126,7 +1169,10 @@ fn git_lfs_lock_paths_rpc(
                     .map_err(|e| warn_err(ctx, "git.lfs.lock_paths env", e))?;
                 let repo = GitSystem::open(&repo_path)
                     .map_err(|e| warn_err(ctx, "git.lfs.lock_paths open", err_display(e)))?;
-                emit_info(ctx, format!("git.lfs.lock_paths start count={}", list.len()));
+                emit_info(
+                    ctx,
+                    format!("git.lfs.lock_paths start count={}", list.len()),
+                );
                 for path in list {
                     repo.lfs_lock(&path)
                         .map_err(|e| warn_err(ctx, "git.lfs.lock_paths", err_display(e)))?;
@@ -1167,7 +1213,8 @@ fn git_lfs_unlock_paths_rpc(
         #[serde(default)]
         force: bool,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.unlock_paths params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.unlock_paths params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.unlock_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -1192,7 +1239,10 @@ fn git_lfs_unlock_paths_rpc(
                     .map_err(|e| warn_err(ctx, "git.lfs.unlock_paths env", e))?;
                 let repo = GitSystem::open(&repo_path)
                     .map_err(|e| warn_err(ctx, "git.lfs.unlock_paths open", err_display(e)))?;
-                emit_info(ctx, format!("git.lfs.unlock_paths start count={}", list.len()));
+                emit_info(
+                    ctx,
+                    format!("git.lfs.unlock_paths start count={}", list.len()),
+                );
                 for path in list {
                     repo.lfs_unlock(&path, p.force)
                         .map_err(|e| warn_err(ctx, "git.lfs.unlock_paths", err_display(e)))?;
@@ -1227,7 +1277,8 @@ fn git_lfs_is_available_rpc(
         #[serde(default)]
         git_backend: String,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| warn_err(ctx, "git.lfs.is_available params", PluginError::message(e)))?;
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.lfs.is_available params", PluginError::message(e)))?;
     let backend = lfs_backend_from_str(&p.git_backend)
         .map_err(|e| warn_err(ctx, "git.lfs.is_available backend", e))?;
     let repo_path = PathBuf::from(p.path);
@@ -1244,7 +1295,10 @@ fn git_lfs_is_available_rpc(
                 let available = repo
                     .lfs_is_available()
                     .map_err(|e| warn_err(ctx, "git.lfs.is_available", err_display(e)))?;
-                emit_info(ctx, format!("git.lfs.is_available ok available={}", available));
+                emit_info(
+                    ctx,
+                    format!("git.lfs.is_available ok available={}", available),
+                );
                 ok(available)
             }
             #[cfg(not(feature = "system-git"))]
