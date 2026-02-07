@@ -257,7 +257,7 @@ try {
       .ctxmenu .item.lfs-disabled{ opacity:.45; pointer-events:none; }
       .menu.lfs-disabled .menu-trigger{ opacity:.5; pointer-events:none; }
       .menu.lfs-disabled .menu-list .menu-item{ opacity:.5; pointer-events:none; }
-      .lfs-locks-modal .dialog.sheet{ width:min(760px, 96vw); }
+      .lfs-locks-modal .dialog.sheet{ width:min(980px, 97vw); }
       .lfs-locks-modal .sheet-body{ max-height:70vh; overflow:auto; }
       .lfs-locks-hero{ display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:.4rem 0 .6rem; }
       .lfs-locks-hero-text{ display:grid; gap:.2rem; }
@@ -271,7 +271,7 @@ try {
       .lfs-lock-path{ font-weight:600; word-break:break-all; }
       .lfs-lock-meta{ color:var(--muted); font-size:.85rem; display:flex; flex-wrap:wrap; gap:.5rem; }
       .lfs-lock-chip{ display:inline-flex; align-items:center; gap:.25rem; padding:.15rem .4rem; border-radius:999px; border:1px solid var(--border); background:var(--surface); font-size:.78rem; }
-      .submodules-modal .dialog.sheet{ width:min(840px, 96vw); }
+      .submodules-modal .dialog.sheet{ width:min(1080px, 97vw); }
       .submodules-modal .sheet-body{ max-height:70vh; overflow:auto; }
       .submodules-list{ display:grid; gap:.5rem; }
       .submodule-row{ display:grid; grid-template-columns:1fr auto; gap:.75rem; align-items:center; padding:.6rem .7rem; border:1px solid var(--border); border-radius:10px; background:var(--surface-2); }
