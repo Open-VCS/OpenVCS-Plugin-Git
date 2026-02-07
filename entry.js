@@ -279,11 +279,11 @@ try {
       .submodule-meta{ color:var(--muted); font-size:.85rem; display:flex; flex-wrap:wrap; gap:.5rem; }
       .submodule-actions{ display:flex; gap:.4rem; flex-wrap:wrap; justify-content:flex-end; }
       .submodule-chip{ display:inline-flex; align-items:center; gap:.25rem; padding:.15rem .4rem; border-radius:999px; border:1px solid var(--border); background:var(--surface); font-size:.78rem; }
-      .plugin-loading{ display:flex; align-items:center; gap:.5rem; color:var(--muted); }
+      .plugin-loading{ display:flex; align-items:center; gap:.7rem; color:var(--text); font-size:1.02rem; font-weight:600; }
       .plugin-loading.hidden{ display:none !important; }
       .plugin-loading .spinner{
-        width:16px; height:16px; border-radius:999px;
-        border:2px solid color-mix(in oklab, var(--muted) 50%, transparent);
+        width:22px; height:22px; border-radius:999px;
+        border:3px solid color-mix(in oklab, var(--muted) 45%, transparent);
         border-top-color: var(--accent);
         animation: pluginSpin .9s linear infinite;
       }
