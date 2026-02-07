@@ -922,6 +922,13 @@ impl Git {
                     path = e.path().map(|p| p.to_string()).unwrap_or_default();
                 }
 
+                let is_submodule = !path.is_empty() && repo.find_submodule(&path).is_ok();
+                let code = if code != "U" && is_submodule {
+                    "S".to_string()
+                } else {
+                    code
+                };
+
                 files.push(FileEntry {
                     path,
                     old_path,

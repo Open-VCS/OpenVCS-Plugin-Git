@@ -11,7 +11,7 @@ use openvcs_core::{OnEvent, Vcs, VcsError, models::BranchKind};
 #[cfg(feature = "libgit2")]
 use openvcs_plugin_git::GitLibGit2;
 #[cfg(feature = "system-git")]
-use openvcs_plugin_git::GitSystem;
+use openvcs_plugin_git::{GitSystem, SubmoduleEntry};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -566,6 +566,16 @@ define_repo_rpc!(cherry_pick_rpc, "cherry_pick");
 define_repo_rpc!(revert_commit_rpc, "revert_commit");
 
 fn lfs_backend_from_str(value: &str) -> Result<GitBackend, PluginError> {
+    match value.trim() {
+        "" | "system" => Ok(GitBackend::System),
+        "libgit2" => Ok(GitBackend::Libgit2),
+        other => Err(PluginError::message(format!(
+            "unknown git backend '{other}'"
+        ))),
+    }
+}
+
+fn submodule_backend_from_str(value: &str) -> Result<GitBackend, PluginError> {
     match value.trim() {
         "" | "system" => Ok(GitBackend::System),
         "libgit2" => Ok(GitBackend::Libgit2),
@@ -1313,6 +1323,277 @@ fn git_lfs_is_available_rpc(
         GitBackend::Libgit2 => ok(false),
     }
 }
+
+fn git_submodule_is_available_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+    }
+    let p: P = parse_json_params(req.params).map_err(|e| {
+        warn_err(
+            ctx,
+            "git.submodule.is_available params",
+            PluginError::message(e),
+        )
+    })?;
+    let backend = submodule_backend_from_str(&p.git_backend)
+        .map_err(|e| warn_err(ctx, "git.submodule.is_available backend", e))?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let repo = GitSystem::open(&repo_path).map_err(|e| {
+                    warn_err(ctx, "git.submodule.is_available open", err_display(e))
+                })?;
+                let available = repo
+                    .submodule_is_available()
+                    .map_err(|e| warn_err(ctx, "git.submodule.is_available", err_display(e)))?;
+                ok(available)
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(warn_err(
+                    ctx,
+                    "git.submodule.is_available",
+                    PluginError::message("system Git backend not compiled into plugin"),
+                ))
+            }
+        }
+        GitBackend::Libgit2 => ok(false),
+    }
+}
+
+fn git_submodule_list_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+    }
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.submodule.list params", PluginError::message(e)))?;
+    let backend = submodule_backend_from_str(&p.git_backend)
+        .map_err(|e| warn_err(ctx, "git.submodule.list backend", e))?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let repo = GitSystem::open(&repo_path)
+                    .map_err(|e| warn_err(ctx, "git.submodule.list open", err_display(e)))?;
+                let items: Vec<SubmoduleEntry> = repo
+                    .submodule_list()
+                    .map_err(|e| warn_err(ctx, "git.submodule.list", err_display(e)))?;
+                ok(items)
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(warn_err(
+                    ctx,
+                    "git.submodule.list",
+                    PluginError::message("system Git backend not compiled into plugin"),
+                ))
+            }
+        }
+        GitBackend::Libgit2 => ok(Vec::<serde_json::Value>::new()),
+    }
+}
+
+fn git_submodule_add_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        url: String,
+        submodule_path: String,
+    }
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.submodule.add params", PluginError::message(e)))?;
+    let backend = submodule_backend_from_str(&p.git_backend)
+        .map_err(|e| warn_err(ctx, "git.submodule.add backend", e))?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let repo = GitSystem::open(&repo_path)
+                    .map_err(|e| warn_err(ctx, "git.submodule.add open", err_display(e)))?;
+                repo.submodule_add(&p.url, &PathBuf::from(p.submodule_path))
+                    .map_err(|e| warn_err(ctx, "git.submodule.add", err_display(e)))?;
+                ok_null()
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(warn_err(
+                    ctx,
+                    "git.submodule.add",
+                    PluginError::message("system Git backend not compiled into plugin"),
+                ))
+            }
+        }
+        GitBackend::Libgit2 => Err(warn_err(
+            ctx,
+            "git.submodule.add",
+            PluginError::message("Submodule operations are not supported by the libgit2 backend"),
+        )),
+    }
+}
+
+fn git_submodule_update_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        #[serde(default)]
+        paths: Vec<String>,
+        #[serde(default = "default_true")]
+        init: bool,
+        #[serde(default = "default_true")]
+        recursive: bool,
+        #[serde(default)]
+        remote: bool,
+    }
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.submodule.update params", PluginError::message(e)))?;
+    let backend = submodule_backend_from_str(&p.git_backend)
+        .map_err(|e| warn_err(ctx, "git.submodule.update backend", e))?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let repo = GitSystem::open(&repo_path)
+                    .map_err(|e| warn_err(ctx, "git.submodule.update open", err_display(e)))?;
+                let paths: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
+                repo.submodule_update(&paths, p.init, p.recursive, p.remote)
+                    .map_err(|e| warn_err(ctx, "git.submodule.update", err_display(e)))?;
+                ok_null()
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(warn_err(
+                    ctx,
+                    "git.submodule.update",
+                    PluginError::message("system Git backend not compiled into plugin"),
+                ))
+            }
+        }
+        GitBackend::Libgit2 => Err(warn_err(
+            ctx,
+            "git.submodule.update",
+            PluginError::message("Submodule operations are not supported by the libgit2 backend"),
+        )),
+    }
+}
+
+fn git_submodule_sync_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        #[serde(default)]
+        paths: Vec<String>,
+        #[serde(default = "default_true")]
+        recursive: bool,
+    }
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.submodule.sync params", PluginError::message(e)))?;
+    let backend = submodule_backend_from_str(&p.git_backend)
+        .map_err(|e| warn_err(ctx, "git.submodule.sync backend", e))?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let repo = GitSystem::open(&repo_path)
+                    .map_err(|e| warn_err(ctx, "git.submodule.sync open", err_display(e)))?;
+                let paths: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
+                repo.submodule_sync(&paths, p.recursive)
+                    .map_err(|e| warn_err(ctx, "git.submodule.sync", err_display(e)))?;
+                ok_null()
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(warn_err(
+                    ctx,
+                    "git.submodule.sync",
+                    PluginError::message("system Git backend not compiled into plugin"),
+                ))
+            }
+        }
+        GitBackend::Libgit2 => Err(warn_err(
+            ctx,
+            "git.submodule.sync",
+            PluginError::message("Submodule operations are not supported by the libgit2 backend"),
+        )),
+    }
+}
+
+fn git_submodule_remove_rpc(
+    ctx: &mut PluginCtx,
+    req: RpcRequest,
+) -> Result<serde_json::Value, PluginError> {
+    #[derive(serde::Deserialize)]
+    struct P {
+        path: String,
+        #[serde(default)]
+        git_backend: String,
+        submodule_path: String,
+        #[serde(default)]
+        force: bool,
+    }
+    let p: P = parse_json_params(req.params)
+        .map_err(|e| warn_err(ctx, "git.submodule.remove params", PluginError::message(e)))?;
+    let backend = submodule_backend_from_str(&p.git_backend)
+        .map_err(|e| warn_err(ctx, "git.submodule.remove backend", e))?;
+    let repo_path = PathBuf::from(p.path);
+    match backend {
+        GitBackend::System => {
+            #[cfg(feature = "system-git")]
+            {
+                let repo = GitSystem::open(&repo_path)
+                    .map_err(|e| warn_err(ctx, "git.submodule.remove open", err_display(e)))?;
+                repo.submodule_remove(&PathBuf::from(p.submodule_path), p.force)
+                    .map_err(|e| warn_err(ctx, "git.submodule.remove", err_display(e)))?;
+                ok_null()
+            }
+            #[cfg(not(feature = "system-git"))]
+            {
+                Err(warn_err(
+                    ctx,
+                    "git.submodule.remove",
+                    PluginError::message("system Git backend not compiled into plugin"),
+                ))
+            }
+        }
+        GitBackend::Libgit2 => Err(warn_err(
+            ctx,
+            "git.submodule.remove",
+            PluginError::message("Submodule operations are not supported by the libgit2 backend"),
+        )),
+    }
+}
 fn open_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, PluginError> {
     #[derive(serde::Deserialize)]
     struct P {
@@ -1609,6 +1890,12 @@ fn main() {
     register_delegate("git.lfs.lock_paths", git_lfs_lock_paths_rpc);
     register_delegate("git.lfs.unlock_paths", git_lfs_unlock_paths_rpc);
     register_delegate("git.lfs.is_available", git_lfs_is_available_rpc);
+    register_delegate("git.submodule.is_available", git_submodule_is_available_rpc);
+    register_delegate("git.submodule.list", git_submodule_list_rpc);
+    register_delegate("git.submodule.add", git_submodule_add_rpc);
+    register_delegate("git.submodule.update", git_submodule_update_rpc);
+    register_delegate("git.submodule.sync", git_submodule_sync_rpc);
+    register_delegate("git.submodule.remove", git_submodule_remove_rpc);
 
     if let Err(e) = run_registered() {
         eprintln!("openvcs-git-plugin: {e}");

@@ -5,6 +5,7 @@ use openvcs_core::models::{
 };
 use openvcs_core::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 /* ============================ registry wiring ============================ */
 
@@ -21,6 +22,11 @@ pub struct GitSystem {
 }
 
 impl GitSystem {
+    fn is_porcelain_submodule_marker(sub: &str) -> bool {
+        let trimmed = sub.trim();
+        !trimmed.is_empty() && trimmed.to_ascii_uppercase().starts_with('S')
+    }
+
     fn untracked_diff_empty_path() -> &'static str {
         if cfg!(windows) { "NUL" } else { "/dev/null" }
     }
@@ -911,7 +917,11 @@ impl Vcs for GitSystem {
                         }
                     } else {
                         // Ordinary changed entry: choose a stable UI status bucket.
-                        let status = if x == 'D' || y == 'D' {
+                        let status = if GitSystem::is_porcelain_submodule_marker(
+                            parts.get(1).copied().unwrap_or(""),
+                        ) {
+                            "S"
+                        } else if x == 'D' || y == 'D' {
                             "D"
                         } else if x == 'A' || y == 'A' {
                             "A"
@@ -1858,4 +1868,197 @@ impl GitSystem {
         log::info!("git-system: lfs_unlock ok path={}", p);
         Ok(())
     }
+
+    pub fn submodule_is_available(&self) -> Result<bool> {
+        match Self::run_git(Some(&self.workdir), ["submodule", "status"]) {
+            Ok(()) => Ok(true),
+            Err(err) => {
+                let msg = err.to_string().to_ascii_lowercase();
+                if msg.contains("no submodule mapping found")
+                    || msg.contains("no submodule")
+                    || msg.contains("not a git repository")
+                {
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+        }
+    }
+
+    fn submodule_name_map(&self) -> Result<HashMap<String, String>> {
+        let mut out = HashMap::new();
+        let raw = Self::run_git_capture(
+            Some(&self.workdir),
+            [
+                "config",
+                "-f",
+                ".gitmodules",
+                "--get-regexp",
+                "^submodule\\..*\\.path$",
+            ],
+        )
+        .unwrap_or_default();
+        for line in raw.lines() {
+            let mut parts = line.split_whitespace();
+            let key = parts.next().unwrap_or("").trim();
+            let path = parts.next().unwrap_or("").trim();
+            if key.is_empty() || path.is_empty() {
+                continue;
+            }
+            if let Some(name) = key
+                .strip_prefix("submodule.")
+                .and_then(|s| s.strip_suffix(".path"))
+            {
+                out.insert(path.to_string(), name.to_string());
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn submodule_list(&self) -> Result<Vec<SubmoduleEntry>> {
+        let out =
+            Self::run_git_capture(Some(&self.workdir), ["submodule", "status", "--recursive"])
+                .unwrap_or_default();
+        let name_map = self.submodule_name_map()?;
+        let mut items = Vec::new();
+        for line in out.lines() {
+            let raw = line.trim_end();
+            if raw.is_empty() {
+                continue;
+            }
+            let mut chars = raw.chars();
+            let marker = chars.next().unwrap_or(' ');
+            let rest = chars.as_str().trim_start();
+            let mut ws = rest.split_whitespace();
+            let commit = ws.next().unwrap_or("").trim();
+            let path = ws.next().unwrap_or("").trim();
+            if path.is_empty() {
+                continue;
+            }
+            let name = name_map
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| path.to_string());
+            let url = Self::run_git_capture(
+                Some(&self.workdir),
+                [
+                    "config",
+                    "-f",
+                    ".gitmodules",
+                    "--get",
+                    &format!("submodule.{name}.url"),
+                ],
+            )
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+            let branch = Self::run_git_capture(
+                Some(&self.workdir),
+                [
+                    "config",
+                    "-f",
+                    ".gitmodules",
+                    "--get",
+                    &format!("submodule.{name}.branch"),
+                ],
+            )
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+            items.push(SubmoduleEntry {
+                path: path.to_string(),
+                commit: if commit.is_empty() {
+                    None
+                } else {
+                    Some(commit.to_string())
+                },
+                url,
+                branch,
+                initialized: marker != '-',
+                dirty: marker == '+',
+                conflicted: marker == 'U',
+            });
+        }
+        Ok(items)
+    }
+
+    pub fn submodule_add(&self, url: &str, path: &Path) -> Result<()> {
+        let p = Self::path_str(path)?;
+        Self::run_git(Some(&self.workdir), ["submodule", "add", "--", url, p])
+    }
+
+    pub fn submodule_update(
+        &self,
+        paths: &[PathBuf],
+        init: bool,
+        recursive: bool,
+        remote: bool,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec!["submodule".into(), "update".into()];
+        if init {
+            args.push("--init".into());
+        }
+        if recursive {
+            args.push("--recursive".into());
+        }
+        if remote {
+            args.push("--remote".into());
+        }
+        if !paths.is_empty() {
+            args.push("--".into());
+            for p in paths {
+                args.push(Self::path_str(p)?.to_string());
+            }
+        }
+        Self::run_git(Some(&self.workdir), args)
+    }
+
+    pub fn submodule_sync(&self, paths: &[PathBuf], recursive: bool) -> Result<()> {
+        let mut args: Vec<String> = vec!["submodule".into(), "sync".into()];
+        if recursive {
+            args.push("--recursive".into());
+        }
+        if !paths.is_empty() {
+            args.push("--".into());
+            for p in paths {
+                args.push(Self::path_str(p)?.to_string());
+            }
+        }
+        Self::run_git(Some(&self.workdir), args)
+    }
+
+    pub fn submodule_remove(&self, path: &Path, force: bool) -> Result<()> {
+        let p = Self::path_str(path)?;
+        let mut deinit: Vec<String> = vec!["submodule".into(), "deinit".into()];
+        if force {
+            deinit.push("-f".into());
+        }
+        deinit.push("--".into());
+        deinit.push(p.to_string());
+        Self::run_git(Some(&self.workdir), deinit)?;
+
+        let mut rm: Vec<String> = vec!["rm".into()];
+        if force {
+            rm.push("-f".into());
+        }
+        rm.push("--".into());
+        rm.push(p.to_string());
+        Self::run_git(Some(&self.workdir), rm)?;
+
+        let modules_dir = self.workdir.join(".git").join("modules").join(path);
+        let _ = std::fs::remove_dir_all(modules_dir);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmoduleEntry {
+    pub path: String,
+    pub commit: Option<String>,
+    pub url: Option<String>,
+    pub branch: Option<String>,
+    pub initialized: bool,
+    pub dirty: bool,
+    pub conflicted: bool,
 }

@@ -112,6 +112,19 @@ const LfsMenubarHtml = `
 </div>
 `.trim();
 
+const SubmoduleMenubarHtml = `
+<div class="menu" data-menu="submodules">
+  <button class="menu-trigger" type="button" aria-haspopup="true" aria-expanded="false">Submodules</button>
+  <div class="menu-list" role="menu" hidden>
+    <button class="menu-item" role="menuitem" data-action="submodules-list">List submodules</button>
+    <button class="menu-item" role="menuitem" data-action="submodules-update-all">Update all (init + recursive)</button>
+    <button class="menu-item" role="menuitem" data-action="submodules-sync-all">Sync all (recursive)</button>
+    <div class="menu-sep" role="separator"></div>
+    <button class="menu-item" role="menuitem" data-action="submodules-add">Add submodule…</button>
+  </div>
+</div>
+`.trim();
+
 const LfsLocksModalHtml = `
 <div class="modal lfs-locks-modal" id="lfs-locks-modal" aria-hidden="true">
   <div class="dialog sheet" role="dialog" aria-modal="true" aria-labelledby="lfs-locks-title">
@@ -177,6 +190,23 @@ try {
       backendId: 'git',
       method,
       params: { path, git_backend, lfs, ...(extra || {}) },
+    });
+  };
+  const getGitBackend = async () => {
+    const cfg = await getCfg();
+    return String(cfg?.git?.backend || 'system');
+  };
+  const callSubmodule = async (method, extra) => {
+    const path = await getRepoPath();
+    if (!path) {
+      window.OpenVCS?.notify?.('No repository selected');
+      return null;
+    }
+    const git_backend = await getGitBackend();
+    return window.OpenVCS?.invoke?.('call_vcs_backend_method', {
+      backendId: 'git',
+      method,
+      params: { path, git_backend, ...(extra || {}) },
     });
   };
 
@@ -626,8 +656,15 @@ try {
   });
 
   window.OpenVCS?.addMenubarMenu?.({
-    id: 'lfs',
+    id: 'submodules',
     after: 'repository',
+    before: 'lfs',
+    html: SubmoduleMenubarHtml,
+  });
+
+  window.OpenVCS?.addMenubarMenu?.({
+    id: 'lfs',
+    after: 'submodules',
     before: 'help',
     html: LfsMenubarHtml,
   });
@@ -724,10 +761,110 @@ try {
           }
         }
       },
+      'submodules-list': async () => {
+        try {
+          const available = await callSubmodule('git.submodule.is_available');
+          if (!available) {
+            window.OpenVCS?.notify?.('Submodule operations are unavailable for this backend');
+            return;
+          }
+          const list = await callSubmodule('git.submodule.list');
+          const rows = Array.isArray(list) ? list : [];
+          if (!rows.length) {
+            window.OpenVCS?.notify?.('No submodules found');
+            return;
+          }
+          const lines = rows.slice(0, 10).map((s) => {
+            const flags = [
+              s?.initialized ? null : 'uninitialized',
+              s?.dirty ? 'dirty' : null,
+              s?.conflicted ? 'conflicted' : null,
+            ].filter(Boolean).join(', ');
+            return `${String(s?.path || '')}${flags ? ` (${flags})` : ''}`;
+          });
+          window.OpenVCS?.notify?.(`Submodules (${rows.length}): ${lines.join(' | ')}`);
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Submodule list failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      },
+      'submodules-update-all': async () => {
+        try {
+          await callSubmodule('git.submodule.update', { init: true, recursive: true, remote: false, paths: [] });
+          window.OpenVCS?.notify?.('Updated submodules');
+          window.dispatchEvent(new CustomEvent('app:status-updated'));
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Submodule update failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      },
+      'submodules-sync-all': async () => {
+        try {
+          await callSubmodule('git.submodule.sync', { recursive: true, paths: [] });
+          window.OpenVCS?.notify?.('Synced submodule remotes');
+          window.dispatchEvent(new CustomEvent('app:status-updated'));
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Submodule sync failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      },
+      'submodules-add': async () => {
+        const url = String(window.prompt('Submodule URL', '') || '').trim();
+        if (!url) return;
+        const submodulePath = String(window.prompt('Submodule path (relative to repo root)', '') || '').trim();
+        if (!submodulePath) return;
+        try {
+          await callSubmodule('git.submodule.add', { url, submodule_path: submodulePath });
+          window.OpenVCS?.notify?.('Submodule added');
+          window.dispatchEvent(new CustomEvent('app:status-updated'));
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Submodule add failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      },
+      'submodule-update-path': async (payload) => {
+        const file = payload?.file || null;
+        const path = String(file?.path || payload?.clickedPath || '').trim();
+        const status = String(file?.status || '').toUpperCase();
+        if (!path || status !== 'S') return;
+        try {
+          await callSubmodule('git.submodule.update', { init: true, recursive: true, remote: false, paths: [path] });
+          window.OpenVCS?.notify?.(`Updated submodule ${path}`);
+          window.dispatchEvent(new CustomEvent('app:status-updated'));
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Submodule update failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      },
+      'submodule-sync-path': async (payload) => {
+        const file = payload?.file || null;
+        const path = String(file?.path || payload?.clickedPath || '').trim();
+        const status = String(file?.status || '').toUpperCase();
+        if (!path || status !== 'S') return;
+        try {
+          await callSubmodule('git.submodule.sync', { recursive: true, paths: [path] });
+          window.OpenVCS?.notify?.(`Synced submodule ${path}`);
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Submodule sync failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      },
+      'submodule-remove-path': async (payload) => {
+        const file = payload?.file || null;
+        const path = String(file?.path || payload?.clickedPath || '').trim();
+        const status = String(file?.status || '').toUpperCase();
+        if (!path || status !== 'S') return;
+        const ok = window.confirm(`Remove submodule ${path}? This removes mapping and stages deletion.`);
+        if (!ok) return;
+        try {
+          await callSubmodule('git.submodule.remove', { submodule_path: path, force: false });
+          window.OpenVCS?.notify?.(`Removed submodule ${path}`);
+          window.dispatchEvent(new CustomEvent('app:status-updated'));
+        } catch (e) {
+          window.OpenVCS?.notify?.(`Submodule remove failed: ${String(e || '').trim() || 'unknown error'}`);
+        }
+      },
     },
     contextMenus: {
       files: [
         { label: 'Lock file', action: 'git-lfs-toggle-lock' },
+        { label: 'Submodule: Update', action: 'submodule-update-path' },
+        { label: 'Submodule: Sync', action: 'submodule-sync-path' },
+        { label: 'Submodule: Remove', action: 'submodule-remove-path' },
       ],
     },
     // Also register the menubar menu via the plugin registration API as a
@@ -735,8 +872,14 @@ try {
     // the host runtime. This avoids the LFS menu silently not appearing.
     menubarMenus: [
       {
-        id: 'lfs',
+        id: 'submodules',
         after: 'repository',
+        before: 'lfs',
+        html: SubmoduleMenubarHtml,
+      },
+      {
+        id: 'lfs',
+        after: 'submodules',
         before: 'help',
         html: LfsMenubarHtml,
       },
