@@ -19,6 +19,7 @@ use std::sync::{Mutex, OnceLock};
 
 struct State {
     git_backend: GitBackend,
+    runtime_container: Option<String>,
     repo: Option<Box<dyn Vcs>>,
 }
 
@@ -73,6 +74,7 @@ fn workspace_opened(payload: serde_json::Value) -> Result<(), PluginError> {
 }
 
 fn caps_rpc(_ctx: &mut PluginCtx, _req: RpcRequest) -> Result<serde_json::Value, PluginError> {
+    let _ = is_flatpak_runtime();
     let s = state()?;
     ok(backend_caps(s.git_backend))
 }
@@ -565,11 +567,11 @@ define_repo_rpc!(stash_show_rpc, "stash_show");
 define_repo_rpc!(cherry_pick_rpc, "cherry_pick");
 define_repo_rpc!(revert_commit_rpc, "revert_commit");
 
-fn lfs_backend_from_str(value: &str) -> Result<GitBackend, PluginError> {
+fn lfs_backend_from_str(value: &str, is_flatpak: bool) -> Result<GitBackend, PluginError> {
     match value.trim() {
         "" | "system" => Ok(GitBackend::System),
         "libgit2" => {
-            if libgit2_disabled_for_runtime() {
+            if is_flatpak {
                 Err(PluginError::message(
                     "libgit2 backend is disabled in Flatpak runtime",
                 ))
@@ -583,11 +585,11 @@ fn lfs_backend_from_str(value: &str) -> Result<GitBackend, PluginError> {
     }
 }
 
-fn submodule_backend_from_str(value: &str) -> Result<GitBackend, PluginError> {
+fn submodule_backend_from_str(value: &str, is_flatpak: bool) -> Result<GitBackend, PluginError> {
     match value.trim() {
         "" | "system" => Ok(GitBackend::System),
         "libgit2" => {
-            if libgit2_disabled_for_runtime() {
+            if is_flatpak {
                 Err(PluginError::message(
                     "libgit2 backend is disabled in Flatpak runtime",
                 ))
@@ -719,9 +721,9 @@ fn git_lfs_fetch_all_rpc(
         #[serde(default)]
         lfs: Option<LfsCfg>,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.fetch_all params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.fetch_all backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -770,9 +772,9 @@ fn git_lfs_pull_rpc(
         #[serde(default)]
         lfs: Option<LfsCfg>,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.pull params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.pull backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -818,9 +820,9 @@ fn git_lfs_prune_rpc(
         #[serde(default)]
         lfs: Option<LfsCfg>,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.prune params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.prune backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -871,9 +873,9 @@ fn git_lfs_track_paths_rpc(
         #[serde(default)]
         paths: Vec<String>,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.track_paths params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.track_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
     let list: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
@@ -933,9 +935,9 @@ fn git_lfs_untrack_paths_rpc(
         #[serde(default)]
         paths: Vec<String>,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.untrack_paths params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.untrack_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
     let list: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
@@ -992,9 +994,9 @@ fn git_lfs_is_tracked_rpc(
         git_backend: String,
         file: String,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.is_tracked params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.is_tracked backend", e))?;
     let repo_path = PathBuf::from(p.path);
     let file_label = p.file.clone();
@@ -1043,9 +1045,9 @@ fn git_lfs_tracked_paths_rpc(
         #[serde(default)]
         paths: Vec<String>,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.tracked_paths params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.tracked_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -1111,9 +1113,9 @@ fn git_lfs_locks_rpc(
         #[serde(default = "default_true")]
         cached: bool,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.locks params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.locks backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -1170,9 +1172,9 @@ fn git_lfs_lock_paths_rpc(
         #[serde(default)]
         paths: Vec<String>,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.lock_paths params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.lock_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
     let list: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
@@ -1239,9 +1241,9 @@ fn git_lfs_unlock_paths_rpc(
         #[serde(default)]
         force: bool,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.unlock_paths params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.unlock_paths backend", e))?;
     let repo_path = PathBuf::from(p.path);
     let list: Vec<PathBuf> = p.paths.into_iter().map(PathBuf::from).collect();
@@ -1303,9 +1305,9 @@ fn git_lfs_is_available_rpc(
         #[serde(default)]
         git_backend: String,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.lfs.is_available params", PluginError::message(e)))?;
-    let backend = lfs_backend_from_str(&p.git_backend)
+    let backend = lfs_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.lfs.is_available backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -1350,14 +1352,14 @@ fn git_submodule_is_available_rpc(
         #[serde(default)]
         git_backend: String,
     }
-    let p: P = parse_json_params(req.params).map_err(|e| {
+    let p: P = parse_json_params(req.params.clone()).map_err(|e| {
         warn_err(
             ctx,
             "git.submodule.is_available params",
             PluginError::message(e),
         )
     })?;
-    let backend = submodule_backend_from_str(&p.git_backend)
+    let backend = submodule_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.submodule.is_available backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -1395,9 +1397,9 @@ fn git_submodule_list_rpc(
         #[serde(default)]
         git_backend: String,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.submodule.list params", PluginError::message(e)))?;
-    let backend = submodule_backend_from_str(&p.git_backend)
+    let backend = submodule_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.submodule.list backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -1436,9 +1438,9 @@ fn git_submodule_add_rpc(
         url: String,
         submodule_path: String,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.submodule.add params", PluginError::message(e)))?;
-    let backend = submodule_backend_from_str(&p.git_backend)
+    let backend = submodule_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.submodule.add backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -1486,9 +1488,9 @@ fn git_submodule_update_rpc(
         #[serde(default)]
         remote: bool,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.submodule.update params", PluginError::message(e)))?;
-    let backend = submodule_backend_from_str(&p.git_backend)
+    let backend = submodule_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.submodule.update backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -1533,9 +1535,9 @@ fn git_submodule_sync_rpc(
         #[serde(default = "default_true")]
         recursive: bool,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.submodule.sync params", PluginError::message(e)))?;
-    let backend = submodule_backend_from_str(&p.git_backend)
+    let backend = submodule_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.submodule.sync backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -1579,9 +1581,9 @@ fn git_submodule_remove_rpc(
         #[serde(default)]
         force: bool,
     }
-    let p: P = parse_json_params(req.params)
+    let p: P = parse_json_params(req.params.clone())
         .map_err(|e| warn_err(ctx, "git.submodule.remove params", PluginError::message(e)))?;
-    let backend = submodule_backend_from_str(&p.git_backend)
+    let backend = submodule_backend_from_str(&p.git_backend, is_flatpak_runtime())
         .map_err(|e| warn_err(ctx, "git.submodule.remove backend", e))?;
     let repo_path = PathBuf::from(p.path);
     match backend {
@@ -1617,11 +1619,11 @@ fn open_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
         #[serde(default)]
         config: serde_json::Value,
     }
-    let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
+    let p: P = parse_json_params(req.params.clone()).map_err(PluginError::message)?;
     let path = PathBuf::from(&p.path);
 
     let mut s = state()?;
-    s.git_backend = git_backend_from_config(&p.config)?;
+    s.git_backend = git_backend_from_config(&p.config, is_flatpak_runtime())?;
     s.repo = Some(match s.git_backend {
         GitBackend::System => {
             #[cfg(feature = "system-git")]
@@ -1665,12 +1667,12 @@ fn clone_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
         #[serde(default)]
         config: serde_json::Value,
     }
-    let p: P = parse_json_params(req.params).map_err(PluginError::message)?;
+    let p: P = parse_json_params(req.params.clone()).map_err(PluginError::message)?;
     let dest = PathBuf::from(&p.dest);
     let on = on_event_sink(ctx);
 
     let mut s = state()?;
-    s.git_backend = git_backend_from_config(&p.config)?;
+    s.git_backend = git_backend_from_config(&p.config, is_flatpak_runtime())?;
     s.repo = Some(match s.git_backend {
         GitBackend::System => {
             #[cfg(feature = "system-git")]
@@ -1801,7 +1803,7 @@ fn parse_args() -> Result<GitBackend, String> {
     Ok(GitBackend::System)
 }
 
-fn git_backend_from_config(cfg: &serde_json::Value) -> Result<GitBackend, PluginError> {
+fn git_backend_from_config(cfg: &serde_json::Value, is_flatpak: bool) -> Result<GitBackend, PluginError> {
     let raw = cfg
         .get("git")
         .and_then(|v| v.get("backend"))
@@ -1811,7 +1813,7 @@ fn git_backend_from_config(cfg: &serde_json::Value) -> Result<GitBackend, Plugin
     match raw {
         "" | "system" => Ok(GitBackend::System),
         "libgit2" => {
-            if libgit2_disabled_for_runtime() {
+            if is_flatpak {
                 Ok(GitBackend::System)
             } else {
                 Ok(GitBackend::Libgit2)
@@ -1823,10 +1825,23 @@ fn git_backend_from_config(cfg: &serde_json::Value) -> Result<GitBackend, Plugin
     }
 }
 
-fn libgit2_disabled_for_runtime() -> bool {
-    std::env::var("OPENVCS_RUNTIME_CONTAINER")
-        .ok()
-        .is_some_and(|v| v.eq_ignore_ascii_case("flatpak"))
+fn is_flatpak_runtime() -> bool {
+    if let Ok(mut s) = state() {
+        if s.runtime_container.is_none() {
+            let runtime = openvcs_core::host::call("runtime.info", serde_json::Value::Null).ok();
+            let container = runtime
+                .and_then(|v| {
+                    v.get("container")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.trim().to_ascii_lowercase())
+                })
+                .filter(|s| !s.is_empty());
+            s.runtime_container = container;
+        }
+        return s.runtime_container.as_deref() == Some("flatpak");
+    }
+
+    false
 }
 
 fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
@@ -1849,6 +1864,7 @@ fn main() {
 
     let _ = STATE.set(Mutex::new(State {
         git_backend,
+        runtime_container: None,
         repo: None,
     }));
 
