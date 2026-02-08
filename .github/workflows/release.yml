@@ -121,7 +121,7 @@ jobs:
           fi
           TAG="$(python - <<'PY'
           import tomllib
-          with open("OpenVCS-Plugin-Git/Cargo.toml", "rb") as f:
+          with open("Cargo.toml", "rb") as f:
               data = tomllib.load(f)
           ver = data["package"]["version"]
           print(f"openvcs-git-v{ver}")
