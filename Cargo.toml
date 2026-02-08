@@ -13,7 +13,7 @@ system-git = []
 libgit2 = ["dep:git2", "dep:thiserror", "dep:time"]
 
 [dependencies]
-openvcs-core = { version = "0.1", features = ["plugin-protocol", "vcs"] }
+openvcs-core = { version = "0.1.8", features = ["plugin-protocol", "vcs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
