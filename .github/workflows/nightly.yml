@@ -31,7 +31,7 @@ jobs:
       ahead_count: ${{ steps.diff.outputs.ahead_count }}
     steps:
       - name: Checkout target ref
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ env.TARGET_REF }}
           fetch-depth: 0
@@ -83,30 +83,16 @@ jobs:
         os: [ubuntu-24.04, macos-latest, windows-latest]
     steps:
       - name: Checkout OpenVCS-Plugin-Git (target ref)
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ env.TARGET_REF }}
           path: OpenVCS-Plugin-Git
           fetch-depth: 0
 
-      - name: Checkout OpenVCS-Core (target ref)
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: ${{ github.repository_owner }}/OpenVCS-Core
-          ref: ${{ env.TARGET_REF }}
-          path: OpenVCS-Core
-          fetch-depth: 0
-
-      - name: Checkout OpenVCS-SDK (target ref)
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: ${{ github.repository_owner }}/OpenVCS-SDK
-          ref: ${{ env.TARGET_REF }}
-          path: OpenVCS-SDK
-          fetch-depth: 0
-
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
+        with:
+          targets: wasm32-wasip1
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
@@ -116,26 +102,35 @@ jobs:
         with:
           workspaces: |
             OpenVCS-Plugin-Git
-            OpenVCS-SDK
+
+      - name: Install cargo-openvcs (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cargo install openvcs-sdk --locked --bin cargo-openvcs
+
+      - name: Install cargo-openvcs (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo install openvcs-sdk --locked --bin cargo-openvcs
 
       - name: Build + package (.ovcsp) (unix)
         if: runner.os != 'Windows'
         shell: bash
-        working-directory: OpenVCS-SDK
+        working-directory: OpenVCS-Plugin-Git
         run: |
           set -euo pipefail
           ARCH="$(uname -m)"
-          cargo run --release -- --plugin-dir ../OpenVCS-Plugin-Git --out dist
+          cargo openvcs dist --plugin-dir . --out dist
           mv "dist/openvcs.git.ovcsp" "dist/openvcs.git-${{ runner.os }}-${ARCH}.ovcsp"
 
       - name: Build + package (.ovcsp) (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        working-directory: OpenVCS-SDK
+        working-directory: OpenVCS-Plugin-Git
         run: |
           $arch = $env:PROCESSOR_ARCHITECTURE
           if ([string]::IsNullOrWhiteSpace($arch)) { $arch = "x86_64" }
-          cargo run --release -- --plugin-dir ..\\OpenVCS-Plugin-Git --out dist
+          cargo openvcs dist --plugin-dir . --out dist
           Move-Item -Path "dist\\openvcs.git.ovcsp" -Destination ("dist\\openvcs.git-Windows-{0}.ovcsp" -f $arch) -Force
 
       - name: Upload artifacts
@@ -143,7 +138,7 @@ jobs:
         with:
           name: openvcs-git-nightly-${{ runner.os }}
           path: |
-            OpenVCS-SDK/dist/openvcs.git-*.ovcsp
+            OpenVCS-Plugin-Git/dist/openvcs.git-*.ovcsp
 
   release:
     name: Publish rolling nightly prerelease
@@ -154,7 +149,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout target ref
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ env.TARGET_REF }}
           fetch-depth: 0

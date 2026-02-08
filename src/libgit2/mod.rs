@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 
-pub const GIT_LIBGIT2_ID: BackendId = backend_id!("git-libgit2");
+pub const GIT_LIBGIT2_ID: BackendId = backend_id!("git");
 
 fn caps_static() -> Capabilities {
     Capabilities {
@@ -507,16 +507,5 @@ impl Vcs for GitLibGit2 {
         Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
     }
 
-    fn lfs_fetch(&self) -> Result<()> {
-        Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
-    }
-    fn lfs_pull(&self) -> Result<()> {
-        Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
-    }
-    fn lfs_prune(&self) -> Result<()> {
-        Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
-    }
-    fn lfs_track(&self, _paths: &[PathBuf]) -> Result<()> {
-        Err(VcsError::Unsupported(GIT_LIBGIT2_ID))
-    }
+    // Git LFS helpers are Git-specific and are intentionally not part of the generic VCS trait.
 }

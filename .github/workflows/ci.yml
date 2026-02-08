@@ -36,13 +36,13 @@ jobs:
       SCCACHE_CACHE_SIZE: '2G'
     steps:
       - name: Checkout OpenVCS-Plugin-Git
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           path: OpenVCS-Plugin-Git
           fetch-depth: 0
 
       - name: Checkout OpenVCS-Core
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ github.repository_owner }}/OpenVCS-Core
           path: OpenVCS-Core
@@ -52,6 +52,7 @@ jobs:
         uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-wasip1
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9

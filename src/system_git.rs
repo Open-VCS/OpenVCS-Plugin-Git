@@ -1,116 +1,19 @@
-#[cfg(not(target_arch = "wasm32"))]
-use openvcs_core::backend_descriptor::{BACKENDS, BackendDescriptor};
 use openvcs_core::backend_id::BackendId;
 use openvcs_core::models::{
     BranchItem, BranchKind, Capabilities, CommitItem, ConflictDetails, ConflictSide, FileEntry,
     LogQuery, OnEvent, StashItem, StatusPayload, StatusSummary, VcsEvent,
 };
 use openvcs_core::*;
-#[cfg(not(target_arch = "wasm32"))]
-use std::process::{Command, Stdio};
-use std::{
-    fs,
-    io::Read,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 /* ============================ registry wiring ============================ */
 
-pub const GIT_SYSTEM_ID: BackendId = backend_id!("git-system");
+pub const GIT_SYSTEM_ID: BackendId = backend_id!("git");
 
-fn caps_static() -> Capabilities {
-    Capabilities {
-        commits: true,
-        branches: true,
-        tags: true,
-        staging: true,
-        push_pull: true,
-        fast_forward: true,
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 fn git_ssh_command() -> String {
     "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes".to_string()
 }
-
-#[cfg(not(target_arch = "wasm32"))]
-fn git_ssh_command() -> String {
-    let mode = std::env::var("OPENVCS_SSH_MODE")
-        .ok()
-        .unwrap_or_else(|| "auto".into());
-    let mode = mode.trim().to_ascii_lowercase();
-
-    let custom = std::env::var("OPENVCS_SSH")
-        .ok()
-        .filter(|s| !s.trim().is_empty());
-
-    let ssh = match mode.as_str() {
-        "custom" => custom.unwrap_or_else(|| "ssh".to_string()),
-        "bundled" => "ssh".to_string(),
-        "host" => {
-            #[cfg(target_os = "linux")]
-            {
-                let prefer = ["/usr/bin/ssh", "/bin/ssh", "/usr/local/bin/ssh"];
-                prefer
-                    .iter()
-                    .copied()
-                    .find_map(|p| std::path::Path::new(p).exists().then(|| p.to_string()))
-                    .unwrap_or_else(|| "ssh".to_string())
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                "ssh".to_string()
-            }
-        }
-        // "auto" (or any unknown value)
-        _ => {
-            // Env override always wins.
-            if let Some(s) = custom {
-                s
-            } else {
-                #[cfg(target_os = "linux")]
-                {
-                    // AppImage builds may ship an older `ssh` on PATH, which can fail to parse
-                    // distro-managed `/etc/crypto-policies/back-ends/openssh.config` (e.g. ML-KEM KEX).
-                    // Prefer the host OpenSSH if present.
-                    let prefer = ["/usr/bin/ssh", "/bin/ssh", "/usr/local/bin/ssh"];
-                    prefer
-                        .iter()
-                        .copied()
-                        .find_map(|p| std::path::Path::new(p).exists().then(|| p.to_string()))
-                        .unwrap_or_else(|| "ssh".to_string())
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    "ssh".to_string()
-                }
-            }
-        }
-    };
-
-    format!("{ssh} -oBatchMode=yes -oStrictHostKeyChecking=yes")
-}
-
-fn open_factory(path: &Path) -> Result<Arc<dyn Vcs>> {
-    GitSystem::open(path).map(|v| Arc::new(v) as Arc<dyn Vcs>)
-}
-
-fn clone_factory(url: &str, dest: &Path, on: Option<OnEvent>) -> Result<Arc<dyn Vcs>> {
-    GitSystem::clone(url, dest, on).map(|v| Arc::new(v) as Arc<dyn Vcs>)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[linkme::distributed_slice(BACKENDS)]
-pub static GIT_SYS_DESC: BackendDescriptor = BackendDescriptor {
-    id: GIT_SYSTEM_ID,
-    name: "Git (system)",
-    caps: caps_static,
-    open: open_factory,
-    clone_repo: clone_factory,
-};
-
-const GIT_COMMAND_NAME: &str = "git";
 
 /* ============================== implementation ============================== */
 
@@ -119,6 +22,154 @@ pub struct GitSystem {
 }
 
 impl GitSystem {
+    fn is_porcelain_submodule_marker(sub: &str) -> bool {
+        let trimmed = sub.trim();
+        !trimmed.is_empty() && trimmed.to_ascii_uppercase().starts_with('S')
+    }
+
+    fn untracked_diff_empty_path() -> &'static str {
+        if cfg!(windows) { "NUL" } else { "/dev/null" }
+    }
+
+    fn parse_porcelain_path(raw: &str) -> String {
+        let s = raw.trim();
+        if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+            return Self::unescape_c_style_path(&s[1..s.len() - 1]);
+        }
+        s.to_string()
+    }
+
+    fn unescape_c_style_path(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch != '\\' {
+                out.push(ch);
+                continue;
+            }
+
+            let Some(next) = chars.next() else {
+                out.push('\\');
+                break;
+            };
+
+            match next {
+                '\\' => out.push('\\'),
+                '"' => out.push('"'),
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                // Git quotePath uses octal escapes for non-printable bytes.
+                d @ '0'..='7' => {
+                    let mut val = (d as u8 - b'0') as u32;
+                    for _ in 0..2 {
+                        let Some(peek) = chars.peek().copied() else {
+                            break;
+                        };
+                        if ('0'..='7').contains(&peek) {
+                            let _ = chars.next();
+                            val = (val * 8) + ((peek as u8 - b'0') as u32);
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(decoded) = char::from_u32(val) {
+                        out.push(decoded);
+                    }
+                }
+                other => out.push(other),
+            }
+        }
+        out
+    }
+
+    fn synthetic_untracked_patch(abs: &Path, display_path: &str) -> Option<Vec<String>> {
+        let bytes = std::fs::read(abs).ok()?;
+        let text = if bytes.contains(&0) {
+            match Self::decode_utf16_text(&bytes) {
+                Some(s) => std::borrow::Cow::Owned(s),
+                None => {
+                    return Some(vec![format!(
+                        "Binary files {} and {} differ",
+                        Self::untracked_diff_empty_path(),
+                        display_path
+                    )]);
+                }
+            }
+        } else {
+            String::from_utf8_lossy(&bytes)
+        };
+        let mut lines = vec![
+            format!("diff --git a/{0} b/{0}", display_path),
+            "new file mode 100644".to_string(),
+            "--- /dev/null".to_string(),
+            format!("+++ b/{display_path}"),
+        ];
+
+        let content_lines: Vec<&str> = text.lines().collect();
+        if !content_lines.is_empty() {
+            lines.push(format!("@@ -0,0 +1,{} @@", content_lines.len()));
+            for line in content_lines {
+                lines.push(format!("+{line}"));
+            }
+        }
+        Some(lines)
+    }
+
+    fn decode_utf16_text(bytes: &[u8]) -> Option<String> {
+        if bytes.len() < 2 || !bytes.len().is_multiple_of(2) {
+            return None;
+        }
+
+        #[derive(Clone, Copy)]
+        enum Endian {
+            Le,
+            Be,
+        }
+
+        let endian = if bytes.starts_with(&[0xFF, 0xFE]) {
+            Endian::Le
+        } else if bytes.starts_with(&[0xFE, 0xFF]) {
+            Endian::Be
+        } else {
+            let even_zeros = bytes.iter().step_by(2).filter(|b| **b == 0).count();
+            let odd_zeros = bytes.iter().skip(1).step_by(2).filter(|b| **b == 0).count();
+            if odd_zeros > even_zeros {
+                Endian::Le
+            } else if even_zeros > odd_zeros {
+                Endian::Be
+            } else {
+                return None;
+            }
+        };
+
+        let mut u16s = Vec::with_capacity(bytes.len() / 2);
+        let mut i = 0usize;
+        while i + 1 < bytes.len() {
+            let hi = bytes[i];
+            let lo = bytes[i + 1];
+            let u = match endian {
+                Endian::Le => u16::from_le_bytes([hi, lo]),
+                Endian::Be => u16::from_be_bytes([hi, lo]),
+            };
+            u16s.push(u);
+            i += 2;
+        }
+
+        if !u16s.is_empty() && (u16s[0] == 0xFEFF || u16s[0] == 0xFFFE) {
+            u16s.remove(0);
+        }
+
+        let mut out = String::new();
+        for ch in std::char::decode_utf16(u16s.into_iter()) {
+            match ch {
+                Ok(c) => out.push(c),
+                Err(_) => return None,
+            }
+        }
+        Some(out)
+    }
+
     fn path_str(p: &Path) -> Result<&str> {
         p.to_str().ok_or_else(|| {
             VcsError::Io(std::io::Error::new(
@@ -141,28 +192,25 @@ impl GitSystem {
             argv.join(" ")
         );
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            let env = vec![
-                ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
-                ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            ];
-            let host_out = crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| {
-                VcsError::Backend {
-                    backend: GIT_SYSTEM_ID,
-                    msg: e,
-                }
+        let env = vec![
+            ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
+            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+        ];
+        let host_out =
+            crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: e,
             })?;
-            if host_out.success {
-                log::trace!(
-                    "git(run): exit={}, stdout_bytes={}, stderr_bytes={}",
-                    host_out.status,
-                    host_out.stdout.len(),
-                    host_out.stderr.len()
-                );
-                return Ok(());
-            }
-            return Err(VcsError::Backend {
+        if host_out.success {
+            log::trace!(
+                "git(run): exit={}, stdout_bytes={}, stderr_bytes={}",
+                host_out.status,
+                host_out.stdout.len(),
+                host_out.stderr.len()
+            );
+            Ok(())
+        } else {
+            Err(VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: format!(
                     "{}{}{}",
@@ -176,56 +224,6 @@ impl GitSystem {
                 )
                 .trim()
                 .to_string(),
-            });
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let out = {
-            let mut cmd = Command::new(GIT_COMMAND_NAME);
-            if let Some(c) = cwd {
-                cmd.current_dir(c);
-            }
-            cmd.args(&argv)
-                // Disable interactive terminal prompts; rely on ssh-agent or fail fast
-                .env("GIT_SSH_COMMAND", git_ssh_command())
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .output()
-                .map_err(VcsError::Io)?
-        };
-
-        #[cfg(not(target_arch = "wasm32"))]
-        if out.status.success() {
-            log::trace!(
-                "git(run): exit=0, stdout_bytes={}, stderr_bytes={}",
-                out.stdout.len(),
-                out.stderr.len()
-            );
-            Ok(())
-        } else {
-            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-            let mut msg = String::new();
-            if !stderr.trim().is_empty() {
-                msg.push_str(stderr.trim_end());
-            }
-            if !stdout.trim().is_empty() {
-                if !msg.is_empty() {
-                    msg.push('\n');
-                }
-                msg.push_str(stdout.trim_end());
-            }
-            if msg.is_empty() {
-                msg = format!("git exited with {}", out.status);
-            }
-            log::debug!(
-                "git(run): exit={}, stdout_bytes={}, stderr_bytes={}",
-                out.status,
-                stdout.len(),
-                stderr.len()
-            );
-            Err(VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg,
             })
         }
     }
@@ -243,60 +241,27 @@ impl GitSystem {
             argv.join(" ")
         );
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            let env = vec![
-                ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
-                ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            ];
-            let out = crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| {
-                VcsError::Backend {
-                    backend: GIT_SYSTEM_ID,
-                    msg: e,
-                }
+        let env = vec![
+            ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
+            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+        ];
+        let out =
+            crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: e,
             })?;
-            if out.success {
-                log::trace!(
-                    "git(capture): exit={}, stdout_bytes={}",
-                    out.status,
-                    out.stdout.len()
-                );
-                return Ok(out.stdout);
-            }
-            return Err(VcsError::Backend {
+        if out.success {
+            log::trace!(
+                "git(capture): exit={}, stdout_bytes={}",
+                out.status,
+                out.stdout.len()
+            );
+            Ok(out.stdout)
+        } else {
+            Err(VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: out.stderr,
-            });
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut cmd = Command::new(GIT_COMMAND_NAME);
-            if let Some(c) = cwd {
-                cmd.current_dir(c);
-            }
-            let out = cmd
-                .args(&argv)
-                .env("GIT_SSH_COMMAND", git_ssh_command())
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .output()
-                .map_err(VcsError::Io)?;
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout).into_owned();
-                log::trace!("git(capture): exit=0, stdout_bytes={}", s.len());
-                Ok(s)
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr).into_owned();
-                log::debug!(
-                    "git(capture): exit={}, stderr_bytes={}",
-                    out.status,
-                    err.len()
-                );
-                Err(VcsError::Backend {
-                    backend: GIT_SYSTEM_ID,
-                    msg: err,
-                })
-            }
+            })
         }
     }
 
@@ -313,39 +278,8 @@ impl GitSystem {
             argv.join(" ")
         );
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            let s = Self::run_git_capture(cwd, argv)?;
-            return Ok(s.into_bytes());
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut cmd = Command::new(GIT_COMMAND_NAME);
-            if let Some(c) = cwd {
-                cmd.current_dir(c);
-            }
-            let out = cmd
-                .args(&argv)
-                .env("GIT_SSH_COMMAND", git_ssh_command())
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .output()
-                .map_err(VcsError::Io)?;
-            if out.status.success() {
-                Ok(out.stdout)
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr).into_owned();
-                log::debug!(
-                    "git(capture-bytes): exit={}, stderr_bytes={}",
-                    out.status,
-                    err.len()
-                );
-                Err(VcsError::Backend {
-                    backend: GIT_SYSTEM_ID,
-                    msg: err,
-                })
-            }
-        }
+        let s = Self::run_git_capture(cwd, argv)?;
+        Ok(s.into_bytes())
     }
 
     // Capture stdout even if the process exits with a non-zero status.
@@ -363,46 +297,21 @@ impl GitSystem {
             argv.join(" ")
         );
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            let env = vec![
-                ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
-                ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            ];
-            let out = crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| {
-                VcsError::Backend {
-                    backend: GIT_SYSTEM_ID,
-                    msg: e,
-                }
+        let env = vec![
+            ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
+            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+        ];
+        let out =
+            crate::host_process::exec(cwd, &argv, &env, None).map_err(|e| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: e,
             })?;
-            log::trace!(
-                "git(capture-any): exit={}, stdout_bytes={}",
-                out.status,
-                out.stdout.len()
-            );
-            return Ok(out.stdout);
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut cmd = Command::new(GIT_COMMAND_NAME);
-            if let Some(c) = cwd {
-                cmd.current_dir(c);
-            }
-            let out = cmd
-                .args(&argv)
-                .env("GIT_SSH_COMMAND", git_ssh_command())
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .output()
-                .map_err(VcsError::Io)?;
-            let s = String::from_utf8_lossy(&out.stdout).into_owned();
-            log::trace!(
-                "git(capture-any): exit={}, stdout_bytes={}",
-                out.status,
-                s.len()
-            );
-            Ok(s)
-        }
+        log::trace!(
+            "git(capture-any): exit={}, stdout_bytes={}",
+            out.status,
+            out.stdout.len()
+        );
+        Ok(out.stdout)
     }
 
     fn run_git_with_input<I, S>(cwd: Option<&Path>, args: I, input: &str) -> Result<()>
@@ -410,58 +319,24 @@ impl GitSystem {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let argv: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
-            let env = vec![
-                ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
-                ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            ];
-            let out = crate::host_process::exec(cwd, &argv, &env, Some(input)).map_err(|e| {
-                VcsError::Backend {
-                    backend: GIT_SYSTEM_ID,
-                    msg: e,
-                }
-            })?;
-            if out.success {
-                return Ok(());
+        let argv: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
+        let env = vec![
+            ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
+            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+        ];
+        let out = crate::host_process::exec(cwd, &argv, &env, Some(input)).map_err(|e| {
+            VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: e,
             }
-            return Err(VcsError::Backend {
+        })?;
+        if out.success {
+            Ok(())
+        } else {
+            Err(VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
                 msg: out.stderr,
-            });
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut cmd = Command::new(GIT_COMMAND_NAME);
-            if let Some(c) = cwd {
-                cmd.current_dir(c);
-            }
-            let mut child = cmd
-                .args(args.into_iter().map(|s| s.as_ref().to_string()))
-                .env("GIT_SSH_COMMAND", git_ssh_command())
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(VcsError::Io)?;
-
-            if let Some(mut stdin) = child.stdin.take() {
-                use std::io::Write;
-                stdin.write_all(input.as_bytes()).map_err(VcsError::Io)?;
-            }
-
-            let out = child.wait_with_output().map_err(VcsError::Io)?;
-            if out.status.success() {
-                Ok(())
-            } else {
-                Err(VcsError::Backend {
-                    backend: GIT_SYSTEM_ID,
-                    msg: String::from_utf8_lossy(&out.stderr).into_owned(),
-                })
-            }
+            })
         }
     }
 
@@ -482,145 +357,31 @@ impl GitSystem {
             });
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            let argv = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-            let env = vec![
-                ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
-                ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            ];
-            let out = crate::host_process::exec(Some(cwd), &argv, &env, None).map_err(|e| {
-                VcsError::Backend {
-                    backend: GIT_SYSTEM_ID,
-                    msg: e,
-                }
-            })?;
-            if !out.stderr.trim().is_empty() {
-                if let Some(cb) = &on {
-                    cb(VcsEvent::RemoteMessage {
-                        msg: out.stderr.clone(),
-                    });
-                }
-            }
-            if out.success {
-                return Ok(());
-            }
-            return Err(VcsError::Backend {
+        let argv = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let env = vec![
+            ("GIT_SSH_COMMAND".to_string(), git_ssh_command()),
+            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+        ];
+        let out = crate::host_process::exec(Some(cwd), &argv, &env, None).map_err(|e| {
+            VcsError::Backend {
                 backend: GIT_SYSTEM_ID,
-                msg: out.stderr,
+                msg: e,
+            }
+        })?;
+        if !out.stderr.trim().is_empty()
+            && let Some(cb) = &on
+        {
+            cb(VcsEvent::RemoteMessage {
+                msg: out.stderr.clone(),
             });
         }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut child = {
-                let mut cmd = Command::new(GIT_COMMAND_NAME);
-                cmd.current_dir(cwd)
-                    .args(args)
-                    .env("GIT_SSH_COMMAND", git_ssh_command())
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-
-                cmd.spawn().map_err(VcsError::Io)?
-            };
-
-            // IMPORTANT: `git fetch --progress` often uses carriage returns (`\r`) without newlines.
-            // Using `BufRead::lines()` can block and stop draining the pipe, which can deadlock the child.
-            // Drain both stdout/stderr with chunked reads and split on either '\n' or '\r'.
-            let stderr_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
-
-            fn drain_stream<R: Read + Send + 'static>(
-                mut reader: R,
-                on: Option<OnEvent>,
-                buf: Arc<Mutex<String>>,
-            ) -> std::thread::JoinHandle<()> {
-                std::thread::spawn(move || {
-                    let mut tmp = [0u8; 8192];
-                    let mut pending: Vec<u8> = Vec::new();
-
-                    let flush = |bytes: &[u8]| {
-                        let text = String::from_utf8_lossy(bytes).trim().to_string();
-                        if text.is_empty() {
-                            return;
-                        }
-                        if let Ok(mut s) = buf.lock() {
-                            if !s.is_empty() {
-                                s.push('\n');
-                            }
-                            s.push_str(&text);
-                        }
-                        if let Some(cb) = &on {
-                            cb(VcsEvent::Progress {
-                                phase: "git".into(),
-                                detail: text,
-                            });
-                        }
-                    };
-
-                    loop {
-                        let n = match reader.read(&mut tmp) {
-                            Ok(0) => break,
-                            Ok(n) => n,
-                            Err(_) => break,
-                        };
-                        pending.extend_from_slice(&tmp[..n]);
-
-                        let mut start = 0usize;
-                        for i in 0..pending.len() {
-                            let b = pending[i];
-                            if b == b'\n' || b == b'\r' {
-                                if i > start {
-                                    flush(&pending[start..i]);
-                                }
-                                start = i + 1;
-                            }
-                        }
-                        if start > 0 {
-                            pending.drain(0..start);
-                        }
-                    }
-
-                    if !pending.is_empty() {
-                        flush(&pending);
-                    }
-                })
-            }
-
-            let stderr_join = child
-                .stderr
-                .take()
-                .map(|stderr| drain_stream(stderr, on.clone(), Arc::clone(&stderr_buf)));
-
-            let stdout_join = child
-                .stdout
-                .take()
-                .map(|stdout| drain_stream(stdout, on.clone(), Arc::clone(&stderr_buf)));
-
-            let status = child.wait().map_err(VcsError::Io)?;
-            if let Some(h) = stdout_join {
-                let _ = h.join();
-            }
-            if let Some(h) = stderr_join {
-                let _ = h.join();
-            }
-            if status.success() {
-                log::trace!("git(stream): exit=0");
-                Ok(())
-            } else {
-                log::debug!("git(stream): exit={}", status);
-                let msg = stderr_buf
-                    .lock()
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| format!("git exited with {status}"));
-                Err(VcsError::Backend {
-                    backend: GIT_SYSTEM_ID,
-                    msg,
-                })
-            }
+        if out.success {
+            Ok(())
+        } else {
+            Err(VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: out.stderr,
+            })
         }
     }
 
@@ -630,31 +391,13 @@ impl GitSystem {
             return Ok(false);
         }
 
-        let abs = self.workdir.join(rel);
-        #[cfg(target_arch = "wasm32")]
-        let work_bytes = {
-            let bytes = crate::host_workspace::read(rel).map_err(|msg| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg,
-            })?;
-            if bytes.len() > 8 * 1024 * 1024 {
-                return Ok(false);
-            }
-            bytes
-        };
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let work_bytes = {
-            if !abs.exists() {
-                return Ok(false);
-            }
-            let meta = fs::metadata(&abs).map_err(VcsError::Io)?;
-            // Avoid reading huge files for heuristic checks.
-            if meta.len() > 8 * 1024 * 1024 {
-                return Ok(false);
-            }
-            fs::read(&abs).map_err(VcsError::Io)?
-        };
+        let work_bytes = crate::host_workspace::read(rel).map_err(|msg| VcsError::Backend {
+            backend: GIT_SYSTEM_ID,
+            msg,
+        })?;
+        if work_bytes.len() > 8 * 1024 * 1024 {
+            return Ok(false);
+        }
 
         let repo_root = self.workdir.clone();
         let spec_ours = format!(":2:{rel}");
@@ -1107,10 +850,10 @@ impl Vcs for GitSystem {
 
             for line in out.lines() {
                 if line.starts_with("? ") {
-                    // Untracked; token after "?" is the path
-                    if let Some(path) = line.split_whitespace().last() {
+                    if let Some(path) = line.strip_prefix("? ") {
+                        let path = GitSystem::parse_porcelain_path(path);
                         files.push(FileEntry {
-                            path: path.to_string(),
+                            path,
                             old_path: None,
                             status: "?".into(),
                             staged: false,
@@ -1120,11 +863,19 @@ impl Vcs for GitSystem {
                     }
                 } else if line.starts_with("1 ") || line.starts_with("2 ") {
                     // Ordinary changed entry: "1 XY ... <path>" or rename/copy record "2 XY ... <path>"
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() < 2 {
+                    let Some(rest) = line.get(2..) else {
+                        continue;
+                    };
+                    // Porcelain v2:
+                    // 1: XY sub mH mI mW hH hI <path>
+                    // 2: XY sub mH mI mW hH hI Xscore <path>\t<orig-path>
+                    let field_count = if line.starts_with("2 ") { 9 } else { 8 };
+                    let parts: Vec<&str> = rest.splitn(field_count, ' ').collect();
+                    if parts.len() < field_count {
                         continue;
                     }
-                    let xy = parts.get(1).copied().unwrap_or("");
+
+                    let xy = parts.first().copied().unwrap_or("");
                     let mut xy_chars = xy.chars();
                     let x = xy_chars.next().unwrap_or(' ');
                     let y = xy_chars.next().unwrap_or(' ');
@@ -1133,31 +884,27 @@ impl Vcs for GitSystem {
                     if line.starts_with("2 ") {
                         // Rename/copy record includes two paths at the end.
                         // Determine which one is the "new" path by checking for existence when possible.
-                        if parts.len() > 2 + 1 + 1 {
-                            let sub = parts.get(2).copied().unwrap_or("");
+                        if let Some(path_pair) = parts.get(8) {
+                            let sub = parts.get(1).copied().unwrap_or("");
                             let status = if sub.to_ascii_uppercase().starts_with('C') {
                                 "C"
                             } else {
                                 "R"
                             }
                             .to_string();
-                            let a = parts
-                                .get(parts.len().saturating_sub(2))
-                                .copied()
-                                .unwrap_or("");
-                            let b = parts
-                                .get(parts.len().saturating_sub(1))
-                                .copied()
-                                .unwrap_or("");
-                            let a_exists = workdir.join(a).exists();
-                            let b_exists = workdir.join(b).exists();
+                            let (a_raw, b_raw) =
+                                path_pair.split_once('\t').unwrap_or((path_pair, ""));
+                            let a = GitSystem::parse_porcelain_path(a_raw);
+                            let b = GitSystem::parse_porcelain_path(b_raw);
+                            let a_exists = workdir.join(&a).exists();
+                            let b_exists = workdir.join(&b).exists();
                             let (new_path, old_path) = if a_exists && !b_exists {
-                                (a.to_string(), Some(b.to_string()))
+                                (a.clone(), Some(b.clone()))
                             } else if b_exists && !a_exists {
-                                (b.to_string(), Some(a.to_string()))
+                                (b.clone(), Some(a.clone()))
                             } else {
                                 // Fallback to porcelain v2 convention: last token is the source/orig path.
-                                (a.to_string(), Some(b.to_string()))
+                                (a.clone(), Some(b.clone()))
                             };
                             files.push(FileEntry {
                                 path: new_path,
@@ -1170,7 +917,11 @@ impl Vcs for GitSystem {
                         }
                     } else {
                         // Ordinary changed entry: choose a stable UI status bucket.
-                        let status = if x == 'D' || y == 'D' {
+                        let status = if GitSystem::is_porcelain_submodule_marker(
+                            parts.get(1).copied().unwrap_or(""),
+                        ) {
+                            "S"
+                        } else if x == 'D' || y == 'D' {
                             "D"
                         } else if x == 'A' || y == 'A' {
                             "A"
@@ -1185,9 +936,9 @@ impl Vcs for GitSystem {
                         }
                         .to_string();
 
-                        if let Some(path) = parts.last() {
+                        if let Some(path) = parts.get(7) {
                             files.push(FileEntry {
-                                path: (*path).to_string(),
+                                path: GitSystem::parse_porcelain_path(path),
                                 old_path: None,
                                 status,
                                 staged,
@@ -1196,20 +947,25 @@ impl Vcs for GitSystem {
                             });
                         }
                     }
-                } else if line.starts_with("u ") {
-                    // conflicted; last token is path
-                    if let Some(path) = line.split_whitespace().last() {
-                        let path = path.to_string();
-                        conflicted_paths.push(path.clone());
-                        files.push(FileEntry {
-                            path,
-                            old_path: None,
-                            status: "U".into(),
-                            staged: false,
-                            resolved_conflict: false,
-                            hunks: Vec::new(),
-                        });
+                } else if line.starts_with("u ")
+                    && let Some(rest) = line.get(2..)
+                {
+                    // Porcelain v2 unmerged:
+                    // u XY sub m1 m2 m3 mW h1 h2 h3 <path>
+                    let parts: Vec<&str> = rest.splitn(10, ' ').collect();
+                    if parts.len() < 10 {
+                        continue;
                     }
+                    let path = GitSystem::parse_porcelain_path(parts[9]);
+                    conflicted_paths.push(path.clone());
+                    files.push(FileEntry {
+                        path,
+                        old_path: None,
+                        status: "U".into(),
+                        staged: false,
+                        resolved_conflict: false,
+                        hunks: Vec::new(),
+                    });
                 }
             }
 
@@ -1438,7 +1194,9 @@ impl Vcs for GitSystem {
         } else {
             self.workdir.join(path)
         };
-        if abs.exists() {
+        if abs.is_file() {
+            let abs_str = Self::path_str(&abs)?;
+            let null_src = Self::untracked_diff_empty_path();
             let out_noindex = Self::run_git_capture_any_exit(
                 Some(&self.workdir),
                 [
@@ -1447,13 +1205,51 @@ impl Vcs for GitSystem {
                     "--unified=3",
                     "--no-index",
                     "--",
-                    "/dev/null",
-                    Self::path_str(&abs)?,
+                    null_src,
+                    abs_str,
                 ],
             )?;
             let sn = out_noindex.trim_end();
             if !sn.is_empty() {
                 return Ok(sn.lines().map(|l| l.to_string()).collect());
+            }
+
+            // Some environments may not expose platform null devices to `git`.
+            // Retry against a temporary empty file to force added-file patch output.
+            let tmp_empty = std::env::temp_dir().join("openvcs-empty-diff-file");
+            if !tmp_empty.exists() {
+                let _ = std::fs::write(&tmp_empty, b"");
+            }
+            if let Ok(tmp_str) = Self::path_str(&tmp_empty) {
+                let out_noindex_tmp = Self::run_git_capture_any_exit(
+                    Some(&self.workdir),
+                    [
+                        "diff",
+                        "--no-color",
+                        "--unified=3",
+                        "--no-index",
+                        "--",
+                        tmp_str,
+                        abs_str,
+                    ],
+                )?;
+                let st = out_noindex_tmp.trim_end();
+                if !st.is_empty() {
+                    return Ok(st.lines().map(|l| l.to_string()).collect());
+                }
+            }
+
+            // Last-resort fallback: synthesize a patch directly from file contents.
+            let display_path = if path.is_absolute() {
+                abs.strip_prefix(&self.workdir)
+                    .ok()
+                    .and_then(|p| p.to_str())
+                    .unwrap_or(abs_str)
+            } else {
+                p
+            };
+            if let Some(synth) = Self::synthetic_untracked_patch(&abs, display_path) {
+                return Ok(synth);
             }
         }
 
@@ -1585,30 +1381,12 @@ impl Vcs for GitSystem {
             path.display(),
             content.len()
         );
-        let abs = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.workdir.join(path)
-        };
         let rel = Self::path_str(path)?;
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            crate::host_workspace::write(rel, content).map_err(|msg| VcsError::Backend {
-                backend: GIT_SYSTEM_ID,
-                msg,
-            })?;
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(parent) = abs.parent()
-                && !parent.exists()
-            {
-                fs::create_dir_all(parent).map_err(VcsError::Io)?;
-            }
-            fs::write(&abs, content).map_err(VcsError::Io)?;
-        }
+        crate::host_workspace::write(rel, content).map_err(|msg| VcsError::Backend {
+            backend: GIT_SYSTEM_ID,
+            msg,
+        })?;
         Self::run_git(Some(&self.workdir), ["add", "--", rel])?;
         Ok(())
     }
@@ -1903,22 +1681,69 @@ impl Vcs for GitSystem {
         Ok(s.lines().map(|l| l.to_string()).collect())
     }
 
-    fn lfs_fetch(&self) -> Result<()> {
-        log::info!("git-system: lfs_fetch in {}", self.workdir.display());
+    // Git LFS helpers are Git-specific and are intentionally not part of the generic VCS trait.
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LfsLock {
+    pub id: Option<String>,
+    pub path: String,
+    pub owner: Option<String>,
+    pub locked_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LfsLockOwner {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LfsLockRaw {
+    id: Option<String>,
+    path: String,
+    locked_at: Option<String>,
+    owner: Option<LfsLockOwner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LfsLocksResponse {
+    #[serde(default)]
+    locks: Vec<LfsLockRaw>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LfsLockResponse {
+    lock: Option<LfsLockRaw>,
+}
+
+impl LfsLock {
+    fn from_raw(raw: LfsLockRaw) -> Self {
+        Self {
+            id: raw.id,
+            path: raw.path,
+            owner: raw.owner.and_then(|o| o.name),
+            locked_at: raw.locked_at,
+        }
+    }
+}
+
+impl GitSystem {
+    pub fn lfs_fetch_all(&self) -> Result<()> {
+        log::info!("git-system: lfs_fetch_all in {}", self.workdir.display());
         Self::run_git(Some(&self.workdir), ["lfs", "fetch", "--all"])
     }
 
-    fn lfs_pull(&self) -> Result<()> {
+    pub fn lfs_pull(&self) -> Result<()> {
         log::info!("git-system: lfs_pull in {}", self.workdir.display());
         Self::run_git(Some(&self.workdir), ["lfs", "pull"])
     }
 
-    fn lfs_prune(&self) -> Result<()> {
+    pub fn lfs_prune(&self) -> Result<()> {
         log::info!("git-system: lfs_prune in {}", self.workdir.display());
         Self::run_git(Some(&self.workdir), ["lfs", "prune"])
     }
 
-    fn lfs_track(&self, paths: &[PathBuf]) -> Result<()> {
+    pub fn lfs_track(&self, paths: &[PathBuf]) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
@@ -1934,7 +1759,7 @@ impl Vcs for GitSystem {
         Self::run_git(Some(&self.workdir), args)
     }
 
-    fn lfs_untrack(&self, paths: &[PathBuf]) -> Result<()> {
+    pub fn lfs_untrack(&self, paths: &[PathBuf]) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
@@ -1950,11 +1775,290 @@ impl Vcs for GitSystem {
         Self::run_git(Some(&self.workdir), args)
     }
 
-    fn lfs_is_tracked(&self, path: &Path) -> Result<bool> {
+    pub fn lfs_is_tracked(&self, path: &Path) -> Result<bool> {
         let p = Self::path_str(path)?;
         // `git check-attr` does not require git-lfs to be installed; it reads `.gitattributes`.
         // Output example: `path/to/file: filter: lfs`
         let out = Self::run_git_capture(Some(&self.workdir), ["check-attr", "filter", "--", p])?;
         Ok(out.lines().any(|l| l.contains("filter: lfs")))
     }
+
+    pub fn lfs_is_available(&self) -> Result<bool> {
+        log::info!("git-system: lfs_is_available in {}", self.workdir.display());
+        match Self::run_git(Some(&self.workdir), ["lfs", "version"]) {
+            Ok(()) => Ok(true),
+            Err(err) => {
+                log::warn!("git-system: lfs_is_available failed: {err}");
+                Ok(false)
+            }
+        }
+    }
+
+    pub fn lfs_locks(&self, cached: bool) -> Result<Vec<LfsLock>> {
+        log::info!(
+            "git-system: lfs_locks{} in {}",
+            if cached { " --cached" } else { "" },
+            self.workdir.display()
+        );
+        let mut args = vec!["lfs", "locks", "--json"];
+        if cached {
+            args.push("--cached");
+        }
+        let out = Self::run_git_capture(Some(&self.workdir), args)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&out).map_err(|e| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: format!("git lfs locks parse failed: {e}"),
+            })?;
+        let raws: Vec<LfsLockRaw> = if value.is_array() {
+            log::debug!("git-system: lfs_locks json array response");
+            serde_json::from_value(value).map_err(|e| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: format!("git lfs locks parse failed: {e}"),
+            })?
+        } else if value.get("locks").is_some() {
+            log::debug!("git-system: lfs_locks json object response");
+            let parsed: LfsLocksResponse =
+                serde_json::from_value(value).map_err(|e| VcsError::Backend {
+                    backend: GIT_SYSTEM_ID,
+                    msg: format!("git lfs locks parse failed: {e}"),
+                })?;
+            parsed.locks
+        } else {
+            Vec::new()
+        };
+        let locks: Vec<LfsLock> = raws.into_iter().map(LfsLock::from_raw).collect();
+        log::info!("git-system: lfs_locks count={}", locks.len());
+        Ok(locks)
+    }
+
+    pub fn lfs_lock(&self, path: &Path) -> Result<LfsLock> {
+        let p = Self::path_str(path)?;
+        log::info!("git-system: lfs_lock {} in {}", p, self.workdir.display());
+        let out = Self::run_git_capture(Some(&self.workdir), ["lfs", "lock", "--json", "--", p])?;
+        let parsed: LfsLockResponse =
+            serde_json::from_str(&out).map_err(|e| VcsError::Backend {
+                backend: GIT_SYSTEM_ID,
+                msg: format!("git lfs lock parse failed: {e}"),
+            })?;
+        let lock = parsed.lock.ok_or_else(|| VcsError::Backend {
+            backend: GIT_SYSTEM_ID,
+            msg: "git lfs lock response missing lock".to_string(),
+        })?;
+        let lock = LfsLock::from_raw(lock);
+        log::info!("git-system: lfs_lock ok path={}", lock.path);
+        Ok(lock)
+    }
+
+    pub fn lfs_unlock(&self, path: &Path, force: bool) -> Result<()> {
+        let p = Self::path_str(path)?;
+        log::info!(
+            "git-system: lfs_unlock{} {} in {}",
+            if force { " --force" } else { "" },
+            p,
+            self.workdir.display()
+        );
+        let mut args = vec!["lfs", "unlock", "--json"];
+        if force {
+            args.push("--force");
+        }
+        args.push("--");
+        args.push(p);
+        Self::run_git(Some(&self.workdir), args)?;
+        log::info!("git-system: lfs_unlock ok path={}", p);
+        Ok(())
+    }
+
+    pub fn submodule_is_available(&self) -> Result<bool> {
+        match Self::run_git(Some(&self.workdir), ["submodule", "status"]) {
+            Ok(()) => Ok(true),
+            Err(err) => {
+                let msg = err.to_string().to_ascii_lowercase();
+                if msg.contains("no submodule mapping found")
+                    || msg.contains("no submodule")
+                    || msg.contains("not a git repository")
+                {
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+        }
+    }
+
+    fn submodule_name_map(&self) -> Result<HashMap<String, String>> {
+        let mut out = HashMap::new();
+        let raw = Self::run_git_capture(
+            Some(&self.workdir),
+            [
+                "config",
+                "-f",
+                ".gitmodules",
+                "--get-regexp",
+                "^submodule\\..*\\.path$",
+            ],
+        )
+        .unwrap_or_default();
+        for line in raw.lines() {
+            let mut parts = line.split_whitespace();
+            let key = parts.next().unwrap_or("").trim();
+            let path = parts.next().unwrap_or("").trim();
+            if key.is_empty() || path.is_empty() {
+                continue;
+            }
+            if let Some(name) = key
+                .strip_prefix("submodule.")
+                .and_then(|s| s.strip_suffix(".path"))
+            {
+                out.insert(path.to_string(), name.to_string());
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn submodule_list(&self) -> Result<Vec<SubmoduleEntry>> {
+        let out =
+            Self::run_git_capture(Some(&self.workdir), ["submodule", "status", "--recursive"])
+                .unwrap_or_default();
+        let name_map = self.submodule_name_map()?;
+        let mut items = Vec::new();
+        for line in out.lines() {
+            let raw = line.trim_end();
+            if raw.is_empty() {
+                continue;
+            }
+            let mut chars = raw.chars();
+            let marker = chars.next().unwrap_or(' ');
+            let rest = chars.as_str().trim_start();
+            let mut ws = rest.split_whitespace();
+            let commit = ws.next().unwrap_or("").trim();
+            let path = ws.next().unwrap_or("").trim();
+            if path.is_empty() {
+                continue;
+            }
+            let name = name_map
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| path.to_string());
+            let url = Self::run_git_capture(
+                Some(&self.workdir),
+                [
+                    "config",
+                    "-f",
+                    ".gitmodules",
+                    "--get",
+                    &format!("submodule.{name}.url"),
+                ],
+            )
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+            let branch = Self::run_git_capture(
+                Some(&self.workdir),
+                [
+                    "config",
+                    "-f",
+                    ".gitmodules",
+                    "--get",
+                    &format!("submodule.{name}.branch"),
+                ],
+            )
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+            items.push(SubmoduleEntry {
+                path: path.to_string(),
+                commit: if commit.is_empty() {
+                    None
+                } else {
+                    Some(commit.to_string())
+                },
+                url,
+                branch,
+                initialized: marker != '-',
+                dirty: marker == '+',
+                conflicted: marker == 'U',
+            });
+        }
+        Ok(items)
+    }
+
+    pub fn submodule_add(&self, url: &str, path: &Path) -> Result<()> {
+        let p = Self::path_str(path)?;
+        Self::run_git(Some(&self.workdir), ["submodule", "add", "--", url, p])
+    }
+
+    pub fn submodule_update(
+        &self,
+        paths: &[PathBuf],
+        init: bool,
+        recursive: bool,
+        remote: bool,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec!["submodule".into(), "update".into()];
+        if init {
+            args.push("--init".into());
+        }
+        if recursive {
+            args.push("--recursive".into());
+        }
+        if remote {
+            args.push("--remote".into());
+        }
+        if !paths.is_empty() {
+            args.push("--".into());
+            for p in paths {
+                args.push(Self::path_str(p)?.to_string());
+            }
+        }
+        Self::run_git(Some(&self.workdir), args)
+    }
+
+    pub fn submodule_sync(&self, paths: &[PathBuf], recursive: bool) -> Result<()> {
+        let mut args: Vec<String> = vec!["submodule".into(), "sync".into()];
+        if recursive {
+            args.push("--recursive".into());
+        }
+        if !paths.is_empty() {
+            args.push("--".into());
+            for p in paths {
+                args.push(Self::path_str(p)?.to_string());
+            }
+        }
+        Self::run_git(Some(&self.workdir), args)
+    }
+
+    pub fn submodule_remove(&self, path: &Path, force: bool) -> Result<()> {
+        let p = Self::path_str(path)?;
+        let mut deinit: Vec<String> = vec!["submodule".into(), "deinit".into()];
+        if force {
+            deinit.push("-f".into());
+        }
+        deinit.push("--".into());
+        deinit.push(p.to_string());
+        Self::run_git(Some(&self.workdir), deinit)?;
+
+        let mut rm: Vec<String> = vec!["rm".into()];
+        if force {
+            rm.push("-f".into());
+        }
+        rm.push("--".into());
+        rm.push(p.to_string());
+        Self::run_git(Some(&self.workdir), rm)?;
+
+        let modules_dir = self.workdir.join(".git").join("modules").join(path);
+        let _ = std::fs::remove_dir_all(modules_dir);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmoduleEntry {
+    pub path: String,
+    pub commit: Option<String>,
+    pub url: Option<String>,
+    pub branch: Option<String>,
+    pub initialized: bool,
+    pub dirty: bool,
+    pub conflicted: bool,
 }
