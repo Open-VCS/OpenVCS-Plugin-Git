@@ -125,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           ARCH="$(uname -m)"
-          cargo run --release -- --plugin-dir ../OpenVCS-Plugin-Git --out dist
+          cargo run --release --bin cargo-openvcs -- --plugin-dir ../OpenVCS-Plugin-Git --out dist
           mv "dist/openvcs.git.ovcsp" "dist/openvcs.git-${{ runner.os }}-${ARCH}.ovcsp"
 
       - name: Build + package (.ovcsp) (windows)
@@ -135,7 +135,7 @@ jobs:
         run: |
           $arch = $env:PROCESSOR_ARCHITECTURE
           if ([string]::IsNullOrWhiteSpace($arch)) { $arch = "x86_64" }
-          cargo run --release -- --plugin-dir ..\\OpenVCS-Plugin-Git --out dist
+          cargo run --release --bin cargo-openvcs -- --plugin-dir ..\\OpenVCS-Plugin-Git --out dist
           Move-Item -Path "dist\\openvcs.git.ovcsp" -Destination ("dist\\openvcs.git-Windows-{0}.ovcsp" -f $arch) -Force
 
       - name: Upload artifacts
