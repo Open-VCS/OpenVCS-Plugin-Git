@@ -1805,7 +1805,10 @@ fn parse_args() -> Result<GitBackend, String> {
     Ok(GitBackend::System)
 }
 
-fn git_backend_from_config(cfg: &serde_json::Value, is_flatpak: bool) -> Result<GitBackend, PluginError> {
+fn git_backend_from_config(
+    cfg: &serde_json::Value,
+    is_flatpak: bool,
+) -> Result<GitBackend, PluginError> {
     let raw = cfg
         .get("git")
         .and_then(|v| v.get("backend"))
