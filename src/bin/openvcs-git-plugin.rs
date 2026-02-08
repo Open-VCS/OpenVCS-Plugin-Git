@@ -1621,9 +1621,10 @@ fn open_rpc(_ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
     }
     let p: P = parse_json_params(req.params.clone()).map_err(PluginError::message)?;
     let path = PathBuf::from(&p.path);
+    let is_flatpak = is_flatpak_runtime();
 
     let mut s = state()?;
-    s.git_backend = git_backend_from_config(&p.config, is_flatpak_runtime())?;
+    s.git_backend = git_backend_from_config(&p.config, is_flatpak)?;
     s.repo = Some(match s.git_backend {
         GitBackend::System => {
             #[cfg(feature = "system-git")]
@@ -1670,9 +1671,10 @@ fn clone_rpc(ctx: &mut PluginCtx, req: RpcRequest) -> Result<serde_json::Value, 
     let p: P = parse_json_params(req.params.clone()).map_err(PluginError::message)?;
     let dest = PathBuf::from(&p.dest);
     let on = on_event_sink(ctx);
+    let is_flatpak = is_flatpak_runtime();
 
     let mut s = state()?;
-    s.git_backend = git_backend_from_config(&p.config, is_flatpak_runtime())?;
+    s.git_backend = git_backend_from_config(&p.config, is_flatpak)?;
     s.repo = Some(match s.git_backend {
         GitBackend::System => {
             #[cfg(feature = "system-git")]
