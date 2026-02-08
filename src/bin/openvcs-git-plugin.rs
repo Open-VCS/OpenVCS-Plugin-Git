@@ -568,7 +568,15 @@ define_repo_rpc!(revert_commit_rpc, "revert_commit");
 fn lfs_backend_from_str(value: &str) -> Result<GitBackend, PluginError> {
     match value.trim() {
         "" | "system" => Ok(GitBackend::System),
-        "libgit2" => Ok(GitBackend::Libgit2),
+        "libgit2" => {
+            if libgit2_disabled_for_runtime() {
+                Err(PluginError::message(
+                    "libgit2 backend is disabled in Flatpak runtime",
+                ))
+            } else {
+                Ok(GitBackend::Libgit2)
+            }
+        }
         other => Err(PluginError::message(format!(
             "unknown git backend '{other}'"
         ))),
@@ -578,7 +586,15 @@ fn lfs_backend_from_str(value: &str) -> Result<GitBackend, PluginError> {
 fn submodule_backend_from_str(value: &str) -> Result<GitBackend, PluginError> {
     match value.trim() {
         "" | "system" => Ok(GitBackend::System),
-        "libgit2" => Ok(GitBackend::Libgit2),
+        "libgit2" => {
+            if libgit2_disabled_for_runtime() {
+                Err(PluginError::message(
+                    "libgit2 backend is disabled in Flatpak runtime",
+                ))
+            } else {
+                Ok(GitBackend::Libgit2)
+            }
+        }
         other => Err(PluginError::message(format!(
             "unknown git backend '{other}'"
         ))),
@@ -1794,11 +1810,23 @@ fn git_backend_from_config(cfg: &serde_json::Value) -> Result<GitBackend, Plugin
         .trim();
     match raw {
         "" | "system" => Ok(GitBackend::System),
-        "libgit2" => Ok(GitBackend::Libgit2),
+        "libgit2" => {
+            if libgit2_disabled_for_runtime() {
+                Ok(GitBackend::System)
+            } else {
+                Ok(GitBackend::Libgit2)
+            }
+        }
         other => Err(PluginError::message(format!(
             "unknown git backend '{other}'"
         ))),
     }
+}
+
+fn libgit2_disabled_for_runtime() -> bool {
+    std::env::var("OPENVCS_RUNTIME_CONTAINER")
+        .ok()
+        .is_some_and(|v| v.eq_ignore_ascii_case("flatpak"))
 }
 
 fn require_utf8_path(p: &Path) -> Result<String, VcsError> {
