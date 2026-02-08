@@ -1826,19 +1826,24 @@ fn git_backend_from_config(cfg: &serde_json::Value, is_flatpak: bool) -> Result<
 }
 
 fn is_flatpak_runtime() -> bool {
+    if let Ok(s) = state()
+        && let Some(container) = s.runtime_container.as_deref()
+    {
+        return container == "flatpak";
+    }
+
+    let container = openvcs_core::get_runtime()
+        .and_then(|runtime| runtime.container)
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty());
+
     if let Ok(mut s) = state() {
         if s.runtime_container.is_none() {
-            let runtime = openvcs_core::host::call("runtime.info", serde_json::Value::Null).ok();
-            let container = runtime
-                .and_then(|v| {
-                    v.get("container")
-                        .and_then(|c| c.as_str())
-                        .map(|s| s.trim().to_ascii_lowercase())
-                })
-                .filter(|s| !s.is_empty());
             s.runtime_container = container;
         }
-        return s.runtime_container.as_deref() == Some("flatpak");
+        if let Some(cached) = s.runtime_container.as_deref() {
+            return cached == "flatpak";
+        }
     }
 
     false
