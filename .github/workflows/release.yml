@@ -45,14 +45,6 @@ jobs:
           path: OpenVCS-Plugin-Git
           fetch-depth: 0
 
-      - name: Checkout OpenVCS-Core
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: ${{ github.repository_owner }}/OpenVCS-Core
-          ref: ${{ github.ref_name }}
-          path: OpenVCS-Core
-          fetch-depth: 0
-
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
 
@@ -68,12 +60,12 @@ jobs:
       - name: Install cargo-openvcs (unix)
         if: runner.os != 'Windows'
         shell: bash
-        run: cargo install cargo-openvcs --locked
+        run: cargo install openvcs-sdk --locked --bin cargo-openvcs
 
       - name: Install cargo-openvcs (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: cargo install cargo-openvcs --locked
+        run: cargo install openvcs-sdk --locked --bin cargo-openvcs
 
       - name: Build + package (.ovcsp) (unix)
         if: runner.os != 'Windows'
