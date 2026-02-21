@@ -1284,11 +1284,11 @@ impl vcs_api::Guest for GitPlugin {
     }
 }
 
-openvcs_core::bindings_vcs::export!(GitPlugin with_types_in openvcs_core::bindings_vcs);
+openvcs_core::vcs_export!(GitPlugin);
 
 #[cfg(test)]
 mod tests {
-    use super::{HookPolicy, settings_from_config};
+    use super::{settings_from_config, HookPolicy};
 
     #[test]
     /// Verifies git settings are parsed from host open config bytes.
