@@ -12,18 +12,9 @@ use parse::{parse_branches, parse_commits, parse_stashes, parse_status_payload};
 use serde::Deserialize;
 use std::sync::{Mutex, OnceLock};
 
-/// Generated bindings for the `vcs` world.
-mod bindings {
-    wit_bindgen::generate!({
-        path: "../Core/wit",
-        world: "vcs",
-        pub_export_macro: true,
-    });
-}
-
-use bindings::exports::openvcs::plugin::plugin_api;
-use bindings::exports::openvcs::plugin::vcs_api;
-use bindings::openvcs::plugin::host_api;
+use openvcs_core::bindings_vcs::exports::openvcs::plugin::plugin_api;
+use openvcs_core::bindings_vcs::exports::openvcs::plugin::vcs_api;
+use openvcs_core::bindings_vcs::openvcs::plugin::host_api;
 
 /// Hook handling policy from host config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1293,7 +1284,7 @@ impl vcs_api::Guest for GitPlugin {
     }
 }
 
-bindings::export!(GitPlugin with_types_in bindings);
+openvcs_core::bindings_vcs::export!(GitPlugin with_types_in openvcs_core::bindings_vcs);
 
 #[cfg(test)]
 mod tests {

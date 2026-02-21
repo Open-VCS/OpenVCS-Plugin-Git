@@ -5,6 +5,7 @@ This directory contains the System Git VCS backend plugin used by OpenVCS.
 ## Runtime model
 
 - The plugin implements `Core/wit/vcs.wit` (`world vcs`).
+- The plugin uses `openvcs-core` generated VCS bindings/macros (no direct `wit-bindgen` dependency).
 - Git operations are executed through the host `process-exec` API.
 - The plugin requests these permissions in `openvcs.plugin.json`:
   - `process.exec`

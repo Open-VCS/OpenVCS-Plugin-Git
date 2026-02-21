@@ -7,6 +7,9 @@ This document describes the Git backend implementation in `Git/`.
 The plugin implements `Core/wit/vcs.wit` (`world vcs`) and exposes a single VCS
 backend id: `git`.
 
+Binding generation and export wiring are provided by `openvcs-core` so plugin
+crates do not depend on `wit-bindgen` directly.
+
 ## Command execution
 
 - Git operations run through the host import `host-api.process-exec`.
