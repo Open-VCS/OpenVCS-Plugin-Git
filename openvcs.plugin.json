@@ -1,0 +1,19 @@
+{
+  "id": "openvcs.git",
+  "name": "OpenVCS Git",
+  "version": "0.1.0",
+  "default_enabled": true,
+  "capabilities": [
+    "process.exec",
+    "workspace.write"
+  ],
+  "module": {
+    "exec": "openvcs-git-plugin.wasm",
+    "vcs_backends": [
+      {
+        "id": "git",
+        "name": "Git"
+      }
+    ]
+  }
+}

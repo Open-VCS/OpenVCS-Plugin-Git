@@ -1,17 +1,40 @@
-# Git Architecture
+# Git Plugin Architecture
 
-This document describes the Git backend module in `Git/`.
-
-## Status
-
-In this umbrella repository, `Git/` is typically managed as a separate implementation that may be included as a submodule.
-If this directory is empty or missing expected sources, initialize submodules:
-
-```bash
-git submodule update --init --recursive
-```
+This document describes the Git backend implementation in `Git/`.
 
 ## Responsibility
 
-The Git module provides a plugin module that implements the `vcs` world contract from `Core/wit/vcs.wit`.
-It is packaged into an `.ovcsp` bundle by the SDK and installed/loaded by the client backend.
+The plugin implements `Core/wit/vcs.wit` (`world vcs`) and exposes a single VCS
+backend id: `git`.
+
+## Command execution
+
+- Git operations run through the host import `host-api.process-exec`.
+- The host keeps process execution sandboxed using capability checks and workspace
+  path confinement.
+- The plugin currently uses System Git only.
+
+## State
+
+The plugin stores lightweight runtime state:
+
+- active workdir path
+- parsed host git settings from `vcs.open(path, config)`
+
+## Manifest and capabilities
+
+`openvcs.plugin.json` declares:
+
+- `module.exec`: `openvcs-git-plugin.wasm`
+- `module.vcs_backends`: `git`
+- `capabilities`: `process.exec`, `workspace.write`
+
+## Packaging
+
+The SDK packages this plugin into an `.ovcsp` bundle with:
+
+```text
+openvcs.git/
+  openvcs.plugin.json
+  bin/openvcs-git-plugin.wasm
+```
