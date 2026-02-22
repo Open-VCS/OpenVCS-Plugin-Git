@@ -12,9 +12,9 @@ use parse::{parse_branches, parse_commits, parse_stashes, parse_status_payload};
 use serde::Deserialize;
 use std::sync::{Mutex, OnceLock};
 
-use openvcs_core::bindings_vcs::exports::openvcs::plugin::plugin_api_v1_1 as plugin_api;
+use openvcs_core::bindings_plugin::exports::openvcs::plugin::plugin_api;
+use openvcs_core::bindings_plugin::openvcs::plugin::host_api;
 use openvcs_core::bindings_vcs::exports::openvcs::plugin::vcs_api;
-use openvcs_core::bindings_vcs::openvcs::plugin::host_api;
 
 const SETTING_PRUNE_ON_FETCH: &str = "prune_on_fetch";
 const SETTING_FETCH_ON_FOCUS: &str = "fetch_on_focus";
@@ -1681,7 +1681,7 @@ impl vcs_api::Guest for GitPlugin {
     }
 }
 
-openvcs_core::vcs_export!(GitPlugin);
+openvcs_core::plugin_export!(GitPlugin);
 
 #[cfg(test)]
 mod tests {
