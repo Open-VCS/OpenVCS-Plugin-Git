@@ -459,30 +459,37 @@ fn settings_defaults_entries() -> Vec<plugin_api::SettingKv> {
     vec![
         plugin_api::SettingKv {
             id: SETTING_PRUNE_ON_FETCH.to_string(),
+            label: Some("Prune on Fetch".to_string()),
             value: plugin_api::SettingValue::Boolean(true),
         },
         plugin_api::SettingKv {
             id: SETTING_FETCH_ON_FOCUS.to_string(),
+            label: Some("Fetch on Focus".to_string()),
             value: plugin_api::SettingValue::Boolean(true),
         },
         plugin_api::SettingKv {
             id: SETTING_ALLOW_HOOKS.to_string(),
+            label: Some("Allow Hooks".to_string()),
             value: plugin_api::SettingValue::Text("ask".to_string()),
         },
         plugin_api::SettingKv {
             id: SETTING_SSH_BINARY.to_string(),
+            label: Some("SSH Mode".to_string()),
             value: plugin_api::SettingValue::Text("auto".to_string()),
         },
         plugin_api::SettingKv {
             id: SETTING_SSH_PATH.to_string(),
+            label: Some("Custom SSH Path".to_string()),
             value: plugin_api::SettingValue::Text(String::new()),
         },
         plugin_api::SettingKv {
             id: SETTING_RESPECT_CORE_AUTOCRLF.to_string(),
+            label: Some("Respect Core.autocrlf".to_string()),
             value: plugin_api::SettingValue::Boolean(true),
         },
         plugin_api::SettingKv {
             id: SETTING_MERGE_TEMPLATE.to_string(),
+            label: Some("Merge Message Template".to_string()),
             value: plugin_api::SettingValue::Text(DEFAULT_MERGE_TEMPLATE.to_string()),
         },
     ]
@@ -530,14 +537,17 @@ fn normalize_settings_values(values: Vec<plugin_api::SettingKv>) -> Vec<plugin_a
     vec![
         plugin_api::SettingKv {
             id: SETTING_PRUNE_ON_FETCH.to_string(),
+            label: Some("Prune on Fetch".to_string()),
             value: plugin_api::SettingValue::Boolean(settings.prune_on_fetch),
         },
         plugin_api::SettingKv {
             id: SETTING_FETCH_ON_FOCUS.to_string(),
+            label: Some("Fetch on Focus".to_string()),
             value: plugin_api::SettingValue::Boolean(settings.fetch_on_focus),
         },
         plugin_api::SettingKv {
             id: SETTING_ALLOW_HOOKS.to_string(),
+            label: Some("Allow Hooks".to_string()),
             value: plugin_api::SettingValue::Text(
                 match settings.allow_hooks {
                     HookPolicy::Allow => "allow",
@@ -549,18 +559,22 @@ fn normalize_settings_values(values: Vec<plugin_api::SettingKv>) -> Vec<plugin_a
         },
         plugin_api::SettingKv {
             id: SETTING_SSH_BINARY.to_string(),
+            label: Some("SSH Mode".to_string()),
             value: plugin_api::SettingValue::Text(settings.ssh_mode.as_str().to_string()),
         },
         plugin_api::SettingKv {
             id: SETTING_SSH_PATH.to_string(),
+            label: Some("Custom SSH Path".to_string()),
             value: plugin_api::SettingValue::Text(settings.ssh_path),
         },
         plugin_api::SettingKv {
             id: SETTING_RESPECT_CORE_AUTOCRLF.to_string(),
+            label: Some("Respect Core.autocrlf".to_string()),
             value: plugin_api::SettingValue::Boolean(settings.respect_core_autocrlf),
         },
         plugin_api::SettingKv {
             id: SETTING_MERGE_TEMPLATE.to_string(),
+            label: Some("Merge Message Template".to_string()),
             value: plugin_api::SettingValue::Text(settings.merge_commit_message_template),
         },
     ]
