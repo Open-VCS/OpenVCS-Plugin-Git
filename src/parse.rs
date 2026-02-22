@@ -348,8 +348,7 @@ mod tests {
     #[test]
     /// Verifies rename records keep old/new paths with spaces.
     fn parse_status_payload_preserves_spaces_in_rename_paths() {
-        let input =
-            "2 R. N... 100644 100644 100644 abcdef1 abcdef2 R100 docs/new name.md\tdocs/old name.md";
+        let input = "2 R. N... 100644 100644 100644 abcdef1 abcdef2 R100 docs/new name.md\tdocs/old name.md";
         let parsed = parse_status_payload(input);
         assert_eq!(parsed.files.len(), 1);
         assert_eq!(parsed.files[0].path, "docs/new name.md");

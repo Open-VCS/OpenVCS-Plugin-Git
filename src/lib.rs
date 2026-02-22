@@ -12,9 +12,18 @@ use parse::{parse_branches, parse_commits, parse_stashes, parse_status_payload};
 use serde::Deserialize;
 use std::sync::{Mutex, OnceLock};
 
-use openvcs_core::bindings_vcs::exports::openvcs::plugin::plugin_api;
+use openvcs_core::bindings_vcs::exports::openvcs::plugin::plugin_api_v1_1 as plugin_api;
 use openvcs_core::bindings_vcs::exports::openvcs::plugin::vcs_api;
 use openvcs_core::bindings_vcs::openvcs::plugin::host_api;
+
+const SETTING_PRUNE_ON_FETCH: &str = "prune_on_fetch";
+const SETTING_FETCH_ON_FOCUS: &str = "fetch_on_focus";
+const SETTING_ALLOW_HOOKS: &str = "allow_hooks";
+const SETTING_SSH_BINARY: &str = "ssh_binary";
+const SETTING_SSH_PATH: &str = "ssh_path";
+const SETTING_RESPECT_CORE_AUTOCRLF: &str = "respect_core_autocrlf";
+const SETTING_MERGE_TEMPLATE: &str = "merge_commit_message_template";
+const DEFAULT_MERGE_TEMPLATE: &str = "Merged branch '{branch:source}' into '{branch:target}'";
 
 /// Hook handling policy from host config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -28,13 +37,49 @@ enum HookPolicy {
     Deny,
 }
 
+/// SSH binary selection mode consumed by the host Git launcher.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum SshMode {
+    /// Automatically resolve host/bundled SSH.
+    #[default]
+    Auto,
+    /// Force host SSH.
+    Host,
+    /// Force bundled SSH.
+    Bundled,
+    /// Use an explicit custom SSH binary path.
+    Custom,
+}
+
+impl SshMode {
+    /// Returns the kebab-case mode string expected by host process env.
+    fn as_str(self) -> &'static str {
+        match self {
+            SshMode::Auto => "auto",
+            SshMode::Host => "host",
+            SshMode::Bundled => "bundled",
+            SshMode::Custom => "custom",
+        }
+    }
+}
+
 /// Effective Git settings consumed by this plugin.
 #[derive(Debug, Clone)]
 struct GitSettings {
     /// Whether fetch should include `--prune` by default.
     prune_on_fetch: bool,
+    /// Whether frontend focus should trigger fetch.
+    fetch_on_focus: bool,
     /// Hook policy for operations that can skip hooks.
     allow_hooks: HookPolicy,
+    /// SSH mode used by host-side Git process setup.
+    ssh_mode: SshMode,
+    /// Custom SSH executable path when `ssh_mode` is custom.
+    ssh_path: String,
+    /// Whether core.autocrlf behavior is respected by frontend workflows.
+    respect_core_autocrlf: bool,
+    /// Merge commit message template.
+    merge_commit_message_template: String,
 }
 
 impl Default for GitSettings {
@@ -42,7 +87,12 @@ impl Default for GitSettings {
     fn default() -> Self {
         Self {
             prune_on_fetch: true,
+            fetch_on_focus: true,
             allow_hooks: HookPolicy::Ask,
+            ssh_mode: SshMode::Auto,
+            ssh_path: String::new(),
+            respect_core_autocrlf: true,
+            merge_commit_message_template: DEFAULT_MERGE_TEMPLATE.to_string(),
         }
     }
 }
@@ -59,9 +109,30 @@ struct PluginState {
 /// Top-level config payload provided by the host in `open`.
 #[derive(Debug, Deserialize, Default)]
 struct HostOpenConfig {
-    /// Git section from host config.
+    /// Legacy nested Git section from host config.
     #[serde(default)]
     git: HostGitConfig,
+    /// Plugin-scoped prune setting.
+    #[serde(default)]
+    prune_on_fetch: Option<bool>,
+    /// Plugin-scoped hook policy.
+    #[serde(default)]
+    allow_hooks: Option<String>,
+    /// Plugin-scoped fetch-on-focus setting.
+    #[serde(default)]
+    fetch_on_focus: Option<bool>,
+    /// Plugin-scoped SSH mode.
+    #[serde(default)]
+    ssh_binary: Option<String>,
+    /// Plugin-scoped custom SSH path.
+    #[serde(default)]
+    ssh_path: Option<String>,
+    /// Plugin-scoped autocrlf behavior toggle.
+    #[serde(default)]
+    respect_core_autocrlf: Option<bool>,
+    /// Plugin-scoped merge message template.
+    #[serde(default)]
+    merge_commit_message_template: Option<String>,
 }
 
 /// Git config subsection used by this plugin.
@@ -76,6 +147,21 @@ struct HostGitConfig {
     /// Hook policy from host settings.
     #[serde(default)]
     allow_hooks: Option<String>,
+    /// Legacy fetch-on-focus setting from host settings.
+    #[serde(default)]
+    fetch_on_focus: Option<bool>,
+    /// Legacy SSH mode from host settings.
+    #[serde(default)]
+    ssh_binary: Option<String>,
+    /// Legacy custom SSH path from host settings.
+    #[serde(default)]
+    ssh_path: Option<String>,
+    /// Legacy autocrlf behavior from host settings.
+    #[serde(default)]
+    respect_core_autocrlf: Option<bool>,
+    /// Legacy merge message template from host settings.
+    #[serde(default)]
+    merge_commit_message_template: Option<String>,
 }
 
 /// Shared plugin state singleton.
@@ -140,20 +226,77 @@ fn require_workdir() -> VcsResult<String> {
         .ok_or_else(|| vcs_error("git.not-open", "repository is not open"))
 }
 
+/// Normalizes hook policy string values.
+fn parse_hook_policy(raw: Option<String>) -> HookPolicy {
+    match raw.as_deref().map(str::trim) {
+        Some("allow") => HookPolicy::Allow,
+        Some("deny") => HookPolicy::Deny,
+        _ => HookPolicy::Ask,
+    }
+}
+
+/// Normalizes SSH mode string values.
+fn parse_ssh_mode(raw: Option<String>) -> SshMode {
+    match raw.as_deref().map(str::trim) {
+        Some("host") => SshMode::Host,
+        Some("bundled") => SshMode::Bundled,
+        Some("custom") => SshMode::Custom,
+        _ => SshMode::Auto,
+    }
+}
+
+/// Normalizes merge template values.
+fn normalize_merge_template(raw: Option<String>) -> String {
+    let trimmed = raw.unwrap_or_default().trim().to_string();
+    if trimmed.is_empty() {
+        DEFAULT_MERGE_TEMPLATE.to_string()
+    } else {
+        trimmed
+    }
+}
+
 /// Parses host config bytes into plugin settings.
 fn settings_from_config(config: &[u8]) -> GitSettings {
     let mut settings = GitSettings::default();
     let parsed = serde_json::from_slice::<HostOpenConfig>(config).unwrap_or_default();
 
-    if let Some(value) = parsed.git.prune_on_fetch {
+    let prune = parsed.prune_on_fetch.or(parsed.git.prune_on_fetch);
+    if let Some(value) = prune {
         settings.prune_on_fetch = value;
     }
 
-    settings.allow_hooks = match parsed.git.allow_hooks.as_deref().map(str::trim) {
-        Some("allow") => HookPolicy::Allow,
-        Some("deny") => HookPolicy::Deny,
-        _ => HookPolicy::Ask,
-    };
+    let fetch_on_focus = parsed.fetch_on_focus.or(parsed.git.fetch_on_focus);
+    if let Some(value) = fetch_on_focus {
+        settings.fetch_on_focus = value;
+    }
+
+    let allow_hooks = parsed.allow_hooks.or(parsed.git.allow_hooks);
+    settings.allow_hooks = parse_hook_policy(allow_hooks);
+
+    let ssh_mode = parsed.ssh_binary.or(parsed.git.ssh_binary);
+    settings.ssh_mode = parse_ssh_mode(ssh_mode);
+
+    let ssh_path = parsed.ssh_path.or(parsed.git.ssh_path).unwrap_or_default();
+    settings.ssh_path = ssh_path.trim().to_string();
+    if settings.ssh_mode != SshMode::Custom {
+        settings.ssh_path.clear();
+    }
+    if settings.ssh_mode == SshMode::Custom && settings.ssh_path.is_empty() {
+        settings.ssh_mode = SshMode::Auto;
+    }
+
+    let respect_core_autocrlf = parsed
+        .respect_core_autocrlf
+        .or(parsed.git.respect_core_autocrlf);
+    if let Some(value) = respect_core_autocrlf {
+        settings.respect_core_autocrlf = value;
+    }
+
+    settings.merge_commit_message_template = normalize_merge_template(
+        parsed
+            .merge_commit_message_template
+            .or(parsed.git.merge_commit_message_template),
+    );
 
     // The host may still provide an older backend selector. This plugin is
     // System Git-only and intentionally ignores non-system selections.
@@ -164,10 +307,22 @@ fn settings_from_config(config: &[u8]) -> GitSettings {
 
 /// Builds default environment variables for Git child process execution.
 fn git_env() -> Vec<host_api::EnvVar> {
-    vec![host_api::EnvVar {
+    let state = snapshot_state();
+    let mut out = vec![host_api::EnvVar {
         key: "GIT_TERMINAL_PROMPT".to_string(),
         value: "0".to_string(),
-    }]
+    }];
+    out.push(host_api::EnvVar {
+        key: "OPENVCS_SSH_MODE".to_string(),
+        value: state.settings.ssh_mode.as_str().to_string(),
+    });
+    if state.settings.ssh_mode == SshMode::Custom && !state.settings.ssh_path.is_empty() {
+        out.push(host_api::EnvVar {
+            key: "OPENVCS_SSH".to_string(),
+            value: state.settings.ssh_path,
+        });
+    }
+    out
 }
 
 /// Executes a command through host `process-exec`.
@@ -299,6 +454,156 @@ fn load_current_branch() -> VcsResult<Option<String>> {
     }
 }
 
+/// Returns default typed setting key/value entries.
+fn settings_defaults_entries() -> Vec<plugin_api::SettingKv> {
+    vec![
+        plugin_api::SettingKv {
+            id: SETTING_PRUNE_ON_FETCH.to_string(),
+            value: plugin_api::SettingValue::Boolean(true),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_FETCH_ON_FOCUS.to_string(),
+            value: plugin_api::SettingValue::Boolean(true),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_ALLOW_HOOKS.to_string(),
+            value: plugin_api::SettingValue::Text("ask".to_string()),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_SSH_BINARY.to_string(),
+            value: plugin_api::SettingValue::Text("auto".to_string()),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_SSH_PATH.to_string(),
+            value: plugin_api::SettingValue::Text(String::new()),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_RESPECT_CORE_AUTOCRLF.to_string(),
+            value: plugin_api::SettingValue::Boolean(true),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_MERGE_TEMPLATE.to_string(),
+            value: plugin_api::SettingValue::Text(DEFAULT_MERGE_TEMPLATE.to_string()),
+        },
+    ]
+}
+
+/// Returns normalized settings values with defaults merged.
+fn normalize_settings_values(values: Vec<plugin_api::SettingKv>) -> Vec<plugin_api::SettingKv> {
+    let mut settings = GitSettings::default();
+
+    for entry in values {
+        let id = entry.id.trim();
+        match (id, entry.value) {
+            (SETTING_PRUNE_ON_FETCH, plugin_api::SettingValue::Boolean(v)) => {
+                settings.prune_on_fetch = v;
+            }
+            (SETTING_FETCH_ON_FOCUS, plugin_api::SettingValue::Boolean(v)) => {
+                settings.fetch_on_focus = v;
+            }
+            (SETTING_ALLOW_HOOKS, plugin_api::SettingValue::Text(v)) => {
+                settings.allow_hooks = parse_hook_policy(Some(v));
+            }
+            (SETTING_SSH_BINARY, plugin_api::SettingValue::Text(v)) => {
+                settings.ssh_mode = parse_ssh_mode(Some(v));
+            }
+            (SETTING_SSH_PATH, plugin_api::SettingValue::Text(v)) => {
+                settings.ssh_path = v.trim().to_string();
+            }
+            (SETTING_RESPECT_CORE_AUTOCRLF, plugin_api::SettingValue::Boolean(v)) => {
+                settings.respect_core_autocrlf = v;
+            }
+            (SETTING_MERGE_TEMPLATE, plugin_api::SettingValue::Text(v)) => {
+                settings.merge_commit_message_template = normalize_merge_template(Some(v));
+            }
+            _ => {}
+        }
+    }
+
+    if settings.ssh_mode != SshMode::Custom {
+        settings.ssh_path.clear()
+    }
+    if settings.ssh_mode == SshMode::Custom && settings.ssh_path.is_empty() {
+        settings.ssh_mode = SshMode::Auto;
+    }
+
+    vec![
+        plugin_api::SettingKv {
+            id: SETTING_PRUNE_ON_FETCH.to_string(),
+            value: plugin_api::SettingValue::Boolean(settings.prune_on_fetch),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_FETCH_ON_FOCUS.to_string(),
+            value: plugin_api::SettingValue::Boolean(settings.fetch_on_focus),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_ALLOW_HOOKS.to_string(),
+            value: plugin_api::SettingValue::Text(
+                match settings.allow_hooks {
+                    HookPolicy::Allow => "allow",
+                    HookPolicy::Ask => "ask",
+                    HookPolicy::Deny => "deny",
+                }
+                .to_string(),
+            ),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_SSH_BINARY.to_string(),
+            value: plugin_api::SettingValue::Text(settings.ssh_mode.as_str().to_string()),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_SSH_PATH.to_string(),
+            value: plugin_api::SettingValue::Text(settings.ssh_path),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_RESPECT_CORE_AUTOCRLF.to_string(),
+            value: plugin_api::SettingValue::Boolean(settings.respect_core_autocrlf),
+        },
+        plugin_api::SettingKv {
+            id: SETTING_MERGE_TEMPLATE.to_string(),
+            value: plugin_api::SettingValue::Text(settings.merge_commit_message_template),
+        },
+    ]
+}
+
+/// Converts normalized setting values into runtime plugin settings state.
+fn settings_from_setting_values(values: &[plugin_api::SettingKv]) -> GitSettings {
+    let mut settings = GitSettings::default();
+    for entry in values {
+        match (entry.id.trim(), &entry.value) {
+            (SETTING_PRUNE_ON_FETCH, plugin_api::SettingValue::Boolean(v)) => {
+                settings.prune_on_fetch = *v;
+            }
+            (SETTING_FETCH_ON_FOCUS, plugin_api::SettingValue::Boolean(v)) => {
+                settings.fetch_on_focus = *v;
+            }
+            (SETTING_ALLOW_HOOKS, plugin_api::SettingValue::Text(v)) => {
+                settings.allow_hooks = parse_hook_policy(Some(v.clone()));
+            }
+            (SETTING_SSH_BINARY, plugin_api::SettingValue::Text(v)) => {
+                settings.ssh_mode = parse_ssh_mode(Some(v.clone()));
+            }
+            (SETTING_SSH_PATH, plugin_api::SettingValue::Text(v)) => {
+                settings.ssh_path = v.trim().to_string();
+            }
+            (SETTING_RESPECT_CORE_AUTOCRLF, plugin_api::SettingValue::Boolean(v)) => {
+                settings.respect_core_autocrlf = *v;
+            }
+            (SETTING_MERGE_TEMPLATE, plugin_api::SettingValue::Text(v)) => {
+                settings.merge_commit_message_template = normalize_merge_template(Some(v.clone()));
+            }
+            _ => {}
+        }
+    }
+    if settings.ssh_mode != SshMode::Custom {
+        settings.ssh_path.clear();
+    }
+    if settings.ssh_mode == SshMode::Custom && settings.ssh_path.is_empty() {
+        settings.ssh_mode = SshMode::Auto;
+    }
+    settings
+}
+
 /// Plugin lifecycle and VCS entrypoint implementation.
 struct GitPlugin;
 
@@ -319,6 +624,53 @@ impl plugin_api::Guest for GitPlugin {
             "plugin.state-error",
             "failed to acquire plugin state lock",
         ))
+    }
+
+    /// Returns no plugin-contributed menus for the Git backend plugin.
+    fn get_menus() -> Result<Vec<plugin_api::Menu>, plugin_api::PluginError> {
+        Ok(Vec::new())
+    }
+
+    /// Handles plugin UI action ids (none currently supported).
+    fn handle_action(id: String) -> Result<(), plugin_api::PluginError> {
+        Err(plugin_api::PluginError {
+            code: "git.unknown-action".to_string(),
+            message: format!("unknown action id: {id}"),
+        })
+    }
+
+    /// Returns normalized default settings declared by this plugin.
+    fn settings_defaults() -> Result<Vec<plugin_api::SettingKv>, plugin_api::PluginError> {
+        Ok(settings_defaults_entries())
+    }
+
+    /// Normalizes loaded persisted settings values.
+    fn settings_on_load(
+        values: Vec<plugin_api::SettingKv>,
+    ) -> Result<Vec<plugin_api::SettingKv>, plugin_api::PluginError> {
+        Ok(normalize_settings_values(values))
+    }
+
+    /// Applies settings to current plugin runtime state.
+    fn settings_on_apply(
+        values: Vec<plugin_api::SettingKv>,
+    ) -> Result<(), plugin_api::PluginError> {
+        let normalized = normalize_settings_values(values);
+        set_settings(settings_from_setting_values(&normalized));
+        Ok(())
+    }
+
+    /// Validates and normalizes values prior to persistence.
+    fn settings_on_save(
+        values: Vec<plugin_api::SettingKv>,
+    ) -> Result<Vec<plugin_api::SettingKv>, plugin_api::PluginError> {
+        Ok(normalize_settings_values(values))
+    }
+
+    /// Resets plugin state to defaults.
+    fn settings_on_reset() -> Result<(), plugin_api::PluginError> {
+        set_settings(GitSettings::default());
+        Ok(())
     }
 }
 
@@ -1319,7 +1671,7 @@ openvcs_core::vcs_export!(GitPlugin);
 
 #[cfg(test)]
 mod tests {
-    use super::{settings_from_config, HookPolicy};
+    use super::{settings_from_config, HookPolicy, SshMode};
 
     #[test]
     /// Verifies git settings are parsed from host open config bytes.
@@ -1337,5 +1689,17 @@ mod tests {
         let settings = settings_from_config(b"{");
         assert!(settings.prune_on_fetch);
         assert_eq!(settings.allow_hooks, HookPolicy::Ask);
+    }
+
+    #[test]
+    /// Verifies plugin-scoped config shape is parsed for SSH settings.
+    fn settings_from_config_reads_plugin_scoped_shape() {
+        let settings = settings_from_config(
+            br#"{"prune_on_fetch":true,"allow_hooks":"allow","ssh_binary":"custom","ssh_path":"/usr/bin/ssh-custom"}"#,
+        );
+        assert!(settings.prune_on_fetch);
+        assert_eq!(settings.allow_hooks, HookPolicy::Allow);
+        assert_eq!(settings.ssh_mode, SshMode::Custom);
+        assert_eq!(settings.ssh_path, "/usr/bin/ssh-custom");
     }
 }
