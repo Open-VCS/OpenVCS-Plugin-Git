@@ -158,18 +158,14 @@ fn parse_tracked_status(rest: &str, rename_or_copy: bool) -> Option<ParsedFileEn
 
     let (path, old_path) = if rename_or_copy {
         let (before_tab, after_tab) = rest.split_once('\t').unwrap_or((rest, ""));
-        let path = before_tab
-            .split_whitespace()
-            .last()
+        let path = remainder_after_fields(before_tab, 8)
             .unwrap_or_default()
             .trim()
             .to_string();
         let old_path = (!after_tab.trim().is_empty()).then(|| after_tab.trim().to_string());
         (path, old_path)
     } else {
-        let path = rest
-            .split_whitespace()
-            .last()
+        let path = remainder_after_fields(rest, 7)
             .unwrap_or_default()
             .trim()
             .to_string();
@@ -198,6 +194,30 @@ fn parse_tracked_status(rest: &str, rename_or_copy: bool) -> Option<ParsedFileEn
         staged,
         conflicted,
     })
+}
+
+/// Returns the trailing substring after `count` whitespace-delimited fields.
+fn remainder_after_fields(text: &str, count: usize) -> Option<&str> {
+    let mut idx = 0usize;
+    let bytes = text.as_bytes();
+
+    for _ in 0..count {
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx >= bytes.len() {
+            return None;
+        }
+        while idx < bytes.len() && !bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+    }
+
+    while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+
+    (idx < bytes.len()).then_some(&text[idx..])
 }
 
 /// Returns true when the porcelain XY pair indicates an unresolved conflict.
@@ -314,6 +334,30 @@ mod tests {
         assert_eq!(parsed.files[1].status, "?");
         assert_eq!(parsed.files[2].status, "U");
         assert!(parsed.files[2].conflicted);
+    }
+
+    #[test]
+    /// Verifies tracked paths with spaces are preserved.
+    fn parse_status_payload_preserves_spaces_in_tracked_paths() {
+        let input = "1 .M N... 100644 100644 100644 abcdef1 abcdef2 docs/plugin architecture.md";
+        let parsed = parse_status_payload(input);
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.files[0].path, "docs/plugin architecture.md");
+    }
+
+    #[test]
+    /// Verifies rename records keep old/new paths with spaces.
+    fn parse_status_payload_preserves_spaces_in_rename_paths() {
+        let input =
+            "2 R. N... 100644 100644 100644 abcdef1 abcdef2 R100 docs/new name.md\tdocs/old name.md";
+        let parsed = parse_status_payload(input);
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.files[0].path, "docs/new name.md");
+        assert_eq!(
+            parsed.files[0].old_path.as_deref(),
+            Some("docs/old name.md")
+        );
+        assert_eq!(parsed.files[0].status, "R");
     }
 
     #[test]
