@@ -887,20 +887,51 @@ impl vcs_api::Guest for GitPlugin {
 
         let mut restore_args = vec![
             "restore".to_string(),
+            "--source=HEAD".to_string(),
             "--staged".to_string(),
             "--worktree".to_string(),
             "--".to_string(),
         ];
         restore_args.extend(cleaned.clone());
-
-        let output = run_git_in_repo_allow_failure(restore_args)?;
-        if output.success {
-            return Ok(());
-        }
+        let _ = run_git_in_repo_allow_failure(restore_args)?;
 
         let mut checkout_args = vec!["checkout".to_string(), "--".to_string()];
-        checkout_args.extend(cleaned);
-        let _ = run_git_in_repo(checkout_args, None)?;
+        checkout_args.extend(cleaned.clone());
+        let _ = run_git_in_repo_allow_failure(checkout_args)?;
+
+        let mut clean_args = vec!["clean".to_string(), "-fd".to_string(), "--".to_string()];
+        clean_args.extend(cleaned.clone());
+        let _ = run_git_in_repo_allow_failure(clean_args)?;
+
+        let mut verify_args = vec![
+            "status".to_string(),
+            "--porcelain=v2".to_string(),
+            "--".to_string(),
+        ];
+        verify_args.extend(cleaned);
+        let verify = run_git_in_repo_allow_failure(verify_args)?;
+        if !verify.success {
+            let head = verify.stderr.lines().next().unwrap_or("git status failed");
+            return Err(vcs_error(
+                "git.exec-failed",
+                format!("discard verify failed (exit {}): {}", verify.status, head),
+            ));
+        }
+
+        let still_changed = verify.stdout.lines().map(str::trim).any(|line| {
+            line.starts_with("1 ")
+                || line.starts_with("2 ")
+                || line.starts_with("u ")
+                || line.starts_with("? ")
+        });
+
+        if still_changed {
+            return Err(vcs_error(
+                "git.exec-failed",
+                "discard did not clear one or more selected paths",
+            ));
+        }
+
         Ok(())
     }
 
