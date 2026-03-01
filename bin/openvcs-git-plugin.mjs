@@ -166,32 +166,36 @@ function isMergeInProgress(session) {
   return existsSync(mergeHeadPath);
 }
 
-/** Parses `git status --porcelain=1 --branch` into status summary/payload. */
+/** Parses `git status --porcelain=1 --branch -z` into status summary/payload. */
 function parseStatus(cwd) {
-  const output = runGitChecked(['status', '--porcelain=1', '--branch'], cwd, 'git-status-failed').stdout;
-  const lines = output.split(/\r?\n/g).filter(Boolean);
+  const output = runGitChecked(['status', '--porcelain=1', '--branch', '-z'], cwd, 'git-status-failed').stdout;
+  const records = output.split('\0').filter(Boolean);
 
   let ahead = 0;
   let behind = 0;
   const files = [];
   const summary = { untracked: 0, modified: 0, staged: 0, conflicted: 0 };
 
-  for (const line of lines) {
-    if (line.startsWith('## ')) {
-      const aheadMatch = line.match(/ahead\s+(\d+)/);
-      const behindMatch = line.match(/behind\s+(\d+)/);
+  for (let i = 0; i < records.length; i += 1) {
+    const record = records[i];
+    if (record.startsWith('## ')) {
+      const aheadMatch = record.match(/ahead\s+(\d+)/);
+      const behindMatch = record.match(/behind\s+(\d+)/);
       ahead = aheadMatch ? Number(aheadMatch[1]) : 0;
       behind = behindMatch ? Number(behindMatch[1]) : 0;
       continue;
     }
 
-    if (line.length < 4) continue;
-    const x = line[0];
-    const y = line[1];
-    const payload = line.slice(3);
-    const renamed = payload.includes(' -> ');
-    const path = renamed ? payload.split(' -> ').at(-1) : payload;
-    const oldPath = renamed ? payload.split(' -> ')[0] : null;
+    if (record.length < 4) continue;
+    const x = record[0];
+    const y = record[1];
+    const payloadPath = record.slice(3);
+    const renamedOrCopied = x === 'R' || x === 'C' || y === 'R' || y === 'C';
+    const path = payloadPath;
+    const oldPath = renamedOrCopied ? records[i + 1] || null : null;
+    if (renamedOrCopied && i + 1 < records.length) {
+      i += 1;
+    }
     const staged = x !== ' ' && x !== '?';
 
     if (x === '?' || y === '?') {
