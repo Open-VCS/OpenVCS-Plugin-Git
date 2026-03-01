@@ -4,30 +4,24 @@ This directory contains the System Git VCS backend plugin used by OpenVCS.
 
 ## Runtime model
 
-- The plugin implements `Core/wit/vcs.wit` (`world vcs`).
-- The plugin uses `openvcs-core` generated VCS bindings/macros (no direct `wit-bindgen` dependency).
-- Git operations are executed through the host `process-exec` API.
-- The plugin requests these permissions in `openvcs.plugin.json`:
-  - `process.exec`
-  - `workspace.write`
-
-## Settings
-
-The plugin receives host settings bytes in `vcs.open(path, config)` and reads the
-`git` section for behavior such as default fetch pruning and hook policy.
+- The plugin runs as a long-lived Node.js process.
+- The plugin implements the JSON-RPC contract used by the backend runtime (`plugin.*` and `vcs.*`).
+- Git operations are executed through the local `git` CLI.
+- The runtime uses a trust model (no per-capability permission prompts).
 
 ## Build
 
 ```bash
 cd Git
-cargo build --release --target wasm32-wasip1
+npm install
+npm run build
 ```
 
 ## Test
 
 ```bash
 cd Git
-cargo test
+npm test
 ```
 
 ## Package
