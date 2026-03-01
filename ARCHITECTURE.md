@@ -4,33 +4,27 @@ This document describes the Git backend implementation in `Git/`.
 
 ## Responsibility
 
-The plugin implements `Core/wit/vcs.wit` (`world vcs`) and exposes a single VCS
-backend id: `git`.
-
-Binding generation and export wiring are provided by `openvcs-core` so plugin
-crates do not depend on `wit-bindgen` directly.
+The plugin implements the backend JSON-RPC contract (`plugin.*` and `vcs.*`)
+and exposes a single VCS backend id: `git`.
 
 ## Command execution
 
-- Git operations run through the host import `host-api.process-exec`.
-- The host keeps process execution sandboxed using capability checks and workspace
-  path confinement.
+- Git operations run directly through the local `git` CLI.
+- The runtime uses a trust model (no per-capability prompts).
 - The plugin currently uses System Git only.
 
 ## State
 
 The plugin stores lightweight runtime state:
 
-- active workdir path
-- parsed host git settings from `vcs.open(path, config)`
+- active session map (`session_id -> workdir`)
 
-## Manifest and capabilities
+## Manifest
 
 `openvcs.plugin.json` declares:
 
-- `module.exec`: `openvcs-git-plugin.wasm`
+- `module.exec`: `openvcs-git-plugin.mjs`
 - `module.vcs_backends`: `git`
-- `capabilities`: `process.exec`, `workspace.write`
 
 ## Packaging
 
@@ -39,5 +33,5 @@ The SDK packages this plugin into an `.ovcsp` bundle with:
 ```text
 openvcs.git/
   openvcs.plugin.json
-  bin/openvcs-git-plugin.wasm
+  bin/openvcs-git-plugin.mjs
 ```
