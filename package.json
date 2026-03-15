@@ -11,8 +11,9 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
     "prepack": "npm run build",
-    "build": "tsc -p tsconfig.json",
-    "dist": "npm run build && openvcs dist --plugin-dir . --out dist"
+    "build:plugin": "tsc -p tsconfig.json",
+    "build": "openvcs build",
+    "dist": "openvcs dist --plugin-dir . --out dist"
   },
   "devDependencies": {
     "@openvcs/sdk": "^0.2.2",

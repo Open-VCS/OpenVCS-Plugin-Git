@@ -28,7 +28,7 @@ npm run build
 ```
 
 - TypeScript sources live in `src/`.
-- `npm run build` compiles the runtime into `bin/` for packaging.
+- `npm run build` runs `openvcs build`, which invokes `build:plugin` and writes the runtime into `bin/`.
 
 ## Test
 
@@ -41,3 +41,5 @@ npm test
 ```bash
 npm run dist
 ```
+
+- `npm run dist` runs `openvcs dist`, which builds plugin assets before packaging unless `--no-build` is passed.
