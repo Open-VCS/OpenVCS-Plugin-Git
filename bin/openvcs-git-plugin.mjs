@@ -555,7 +555,9 @@ async function handleMessage(message) {
       }
       case 'vcs.checkout_conflict_side': {
         const side = String(params.side || '').toLowerCase() === 'theirs' ? '--theirs' : '--ours';
-        runGitChecked(['checkout', side, '--', String(params.path || '')], cwd, 'vcs-checkout-conflict-side-failed');
+        const path = String(params.path || '');
+        runGitChecked(['checkout', side, '--', path], cwd, 'vcs-checkout-conflict-side-failed');
+        runGitChecked(['add', '--', path], cwd, 'vcs-checkout-conflict-side-add-failed');
         sendResult(id, null);
         return;
       }
