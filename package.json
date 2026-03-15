@@ -8,19 +8,24 @@
     "node": ">=18"
   },
   "scripts": {
-    "lint": "node --check bin/openvcs-git-plugin.mjs",
-    "test": "node --test test/*.test.js 2>/dev/null || echo 'No tests found'",
-    "prepack": "node --check bin/openvcs-git-plugin.mjs",
-    "build": "node --check bin/openvcs-git-plugin.mjs",
-    "dist": "openvcs dist --plugin-dir . --out dist"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "prepack": "npm run build",
+    "build": "tsc -p tsconfig.json",
+    "dist": "npm run build && openvcs dist --plugin-dir . --out dist"
   },
   "devDependencies": {
-    "@openvcs/sdk": "^0.2.2"
+    "@openvcs/sdk": "^0.2.2",
+    "@types/node": "^24.6.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
   },
   "dependencies": {},
   "files": [
     "bin/",
+    "src/",
     "openvcs.plugin.json",
+    "tsconfig.json",
     "README.md",
     "ARCHITECTURE.md",
     "icon.png",

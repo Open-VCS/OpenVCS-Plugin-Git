@@ -56,11 +56,11 @@ jobs:
           SINCE_SHA="$(git rev-list -n 1 "$TAG")"
           echo "since_sha=$SINCE_SHA" >> "$GITHUB_OUTPUT"
 
-          if git diff --quiet "$TAG"..HEAD -- bin openvcs.plugin.json README.md ARCHITECTURE.md icon.png LICENSE package.json test/; then
+          if git diff --quiet "$TAG"..HEAD -- src openvcs.plugin.json README.md ARCHITECTURE.md icon.png LICENSE package.json package-lock.json tsconfig.json test/; then
             echo "changed=false"      >> "$GITHUB_OUTPUT"
             echo "ahead_count=0"      >> "$GITHUB_OUTPUT"
           else
-            AHEAD="$(git rev-list --count "$TAG"..HEAD -- bin openvcs.plugin.json README.md ARCHITECTURE.md icon.png LICENSE package.json test/ || echo 1)"
+            AHEAD="$(git rev-list --count "$TAG"..HEAD -- src openvcs.plugin.json README.md ARCHITECTURE.md icon.png LICENSE package.json package-lock.json tsconfig.json test/ || echo 1)"
             echo "changed=true"       >> "$GITHUB_OUTPUT"
             echo "ahead_count=$AHEAD" >> "$GITHUB_OUTPUT"
           fi

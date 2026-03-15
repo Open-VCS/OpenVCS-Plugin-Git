@@ -21,6 +21,15 @@ npm install
 npm run lint
 ```
 
+## Build
+
+```bash
+npm run build
+```
+
+- TypeScript sources live in `src/`.
+- `npm run build` compiles the runtime into `bin/` for packaging.
+
 ## Test
 
 ```bash

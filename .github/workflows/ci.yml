@@ -4,10 +4,11 @@ on:
   push:
     branches: [Dev]
     paths:
-      - 'bin/**'
+      - 'src/**'
       - 'openvcs.plugin.json'
       - 'package.json'
       - 'package-lock.json'
+      - 'tsconfig.json'
       - 'test/**'
       - 'README.md'
       - 'ARCHITECTURE.md'
@@ -17,10 +18,11 @@ on:
   pull_request:
     branches: [Dev]
     paths:
-      - 'bin/**'
+      - 'src/**'
       - 'openvcs.plugin.json'
       - 'package.json'
       - 'package-lock.json'
+      - 'tsconfig.json'
       - 'test/**'
       - 'README.md'
       - 'ARCHITECTURE.md'
@@ -55,7 +57,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint (syntax check)
+      - name: Lint (TypeScript type check)
         run: npm run lint
 
       - name: Test

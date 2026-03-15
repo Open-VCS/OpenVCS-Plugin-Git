@@ -12,6 +12,8 @@ and exposes a single VCS backend id: `git`.
 - Git operations run directly through the local `git` CLI.
 - The runtime uses a trust model (no per-capability prompts).
 - The plugin currently uses System Git only.
+- TypeScript source lives under `src/` and compiles into the packaged `bin/`
+  runtime files.
 - Status reads use `git status --porcelain=1 --branch -z -uall` so file paths are
   NUL-delimited and not C-quoted.
 - For rename and copy records, the porcelain format includes two NUL-terminated
@@ -31,7 +33,7 @@ The plugin stores lightweight runtime state:
 
 `openvcs.plugin.json` declares:
 
-- `module.exec`: `openvcs-git-plugin.mjs`
+- `module.exec`: `openvcs-git-plugin.js`
 - `module.vcs_backends`: `git`
 
 ## Packaging
@@ -41,5 +43,7 @@ The SDK packages this plugin into an `.ovcsp` bundle with:
 ```text
 openvcs.git/
   openvcs.plugin.json
-  bin/openvcs-git-plugin.mjs
+  bin/openvcs-git-plugin.js
+  bin/plugin-helpers.js
+  bin/plugin-runtime.js
 ```
