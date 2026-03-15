@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const PROTOCOL_VERSION = 1;
@@ -162,8 +162,8 @@ function runGitChecked(args, cwd, errorCode, requestId = null, sessionId = null,
 
 /** Returns whether merge is in progress for a session. */
 function isMergeInProgress(session) {
-  const mergeHeadPath = join(session.path, '.git', 'MERGE_HEAD');
-  return existsSync(mergeHeadPath);
+  const out = runGit(['rev-parse', '--verify', '-q', 'MERGE_HEAD'], session.path);
+  return out.status === 0;
 }
 
 /** Parses `git status --porcelain=1 --branch -z -uall` into status summary/payload. */
@@ -580,7 +580,7 @@ async function handleMessage(message) {
       }
       case 'vcs.discard_paths': {
         const paths = Array.isArray(params.paths) ? params.paths.map((v) => String(v || '')).filter(Boolean) : [];
-        if (paths.length) runGitChecked(['checkout', '--', ...paths], cwd, 'vcs-discard-paths-failed');
+        if (paths.length) runGitChecked(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...paths], cwd, 'vcs-discard-paths-failed');
         sendResult(id, null);
         return;
       }
