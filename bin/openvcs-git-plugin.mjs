@@ -191,8 +191,8 @@ function parseStatus(cwd) {
     const y = record[1];
     const payloadPath = record.slice(3);
     const renamedOrCopied = x === 'R' || x === 'C' || y === 'R' || y === 'C';
-    const path = payloadPath;
-    const oldPath = renamedOrCopied ? records[i + 1] || null : null;
+    const path = renamedOrCopied ? records[i + 1] : payloadPath;
+    const oldPath = renamedOrCopied ? payloadPath : null;
     if (renamedOrCopied && i + 1 < records.length) {
       i += 1;
     }
@@ -414,8 +414,11 @@ async function handleMessage(message) {
         return;
       }
       case 'vcs.fetch': {
+        const args = ['fetch'];
+        if (params.remote) args.push(params.remote);
+        if (params.refspec) args.push(params.refspec);
         runGitChecked(
-          ['fetch', String(params.remote || ''), String(params.refspec || '')],
+          args,
           cwd,
           'vcs-fetch-failed',
           requestId,
@@ -428,15 +431,18 @@ async function handleMessage(message) {
       case 'vcs.fetch_with_options': {
         const args = ['fetch'];
         if (params?.opts?.prune === true) args.push('--prune');
-        args.push(String(params.remote || ''));
-        args.push(String(params.refspec || ''));
+        if (params.remote) args.push(params.remote);
+        if (params.refspec) args.push(params.refspec);
         runGitChecked(args, cwd, 'vcs-fetch-failed', requestId, String(params.session_id || ''), 'fetch');
         sendResult(id, null);
         return;
       }
       case 'vcs.push': {
+        const args = ['push'];
+        if (params.remote) args.push(params.remote);
+        if (params.refspec) args.push(params.refspec);
         runGitChecked(
-          ['push', String(params.remote || ''), String(params.refspec || '')],
+          args,
           cwd,
           'vcs-push-failed',
           requestId,
@@ -447,8 +453,11 @@ async function handleMessage(message) {
         return;
       }
       case 'vcs.pull_ff_only': {
+        const args = ['pull', '--ff-only'];
+        if (params.remote) args.push(params.remote);
+        if (params.branch) args.push(params.branch);
         runGitChecked(
-          ['pull', '--ff-only', String(params.remote || ''), String(params.branch || '')],
+          args,
           cwd,
           'vcs-pull-failed',
           requestId,
