@@ -9,23 +9,26 @@ This directory contains the System Git VCS backend plugin used by OpenVCS.
 - Git operations are executed through the local `git` CLI.
 - The runtime uses a trust model (no per-capability permission prompts).
 
-## Build
+## Install
 
 ```bash
-cd Git
 npm install
-npm run build
+```
+
+## Validate
+
+```bash
+npm run lint
 ```
 
 ## Test
 
 ```bash
-cd Git
 npm test
 ```
 
 ## Package
 
 ```bash
-cargo openvcs dist --plugin-dir /projects/OpenVCS/Git --out /path/to/dist
+npm run dist
 ```
