@@ -567,6 +567,7 @@ async function handleMessage(message) {
         const abs = join(cwd, path);
         const bytes = Buffer.from(contentB64, 'base64');
         writeFileSync(abs, bytes);
+        runGitChecked(['add', '--', path], cwd, 'vcs-write-merge-result-add-failed');
         sendResult(id, null);
         return;
       }
