@@ -166,9 +166,9 @@ function isMergeInProgress(session) {
   return existsSync(mergeHeadPath);
 }
 
-/** Parses `git status --porcelain=1 --branch -z` into status summary/payload. */
+/** Parses `git status --porcelain=1 --branch -z -uall` into status summary/payload. */
 function parseStatus(cwd) {
-  const output = runGitChecked(['status', '--porcelain=1', '--branch', '-z'], cwd, 'git-status-failed').stdout;
+  const output = runGitChecked(['status', '--porcelain=1', '--branch', '-z', '-uall'], cwd, 'git-status-failed').stdout;
   const records = output.split('\0').filter(Boolean);
 
   let ahead = 0;
