@@ -14,14 +14,13 @@ updates:
         applies-to: version-updates
         update-types: [minor, patch]
 
-  - package-ecosystem: cargo
+  - package-ecosystem: npm
     directory: /
     schedule: { interval: weekly, day: monday, time: "07:00" } # UTC
     target-branch: Dev
     open-pull-requests-limit: 10
-    labels: [deps, rust]
+    labels: [deps, npm]
     groups:
-      cargo-minor-patch:
+      npm-minor-patch:
         applies-to: version-updates
         update-types: [minor, patch]
-

@@ -56,89 +56,47 @@ jobs:
           SINCE_SHA="$(git rev-list -n 1 "$TAG")"
           echo "since_sha=$SINCE_SHA" >> "$GITHUB_OUTPUT"
 
-          if git diff --quiet "$TAG"..HEAD -- src Cargo.toml Cargo.lock openvcs.plugin.json; then
+          if git diff --quiet "$TAG"..HEAD -- bin openvcs.plugin.json README.md ARCHITECTURE.md icon.png LICENSE package.json test/; then
             echo "changed=false"      >> "$GITHUB_OUTPUT"
             echo "ahead_count=0"      >> "$GITHUB_OUTPUT"
           else
-            AHEAD="$(git rev-list --count "$TAG"..HEAD -- src Cargo.toml Cargo.lock openvcs.plugin.json || echo 1)"
+            AHEAD="$(git rev-list --count "$TAG"..HEAD -- bin openvcs.plugin.json README.md ARCHITECTURE.md icon.png LICENSE package.json test/ || echo 1)"
             echo "changed=true"       >> "$GITHUB_OUTPUT"
             echo "ahead_count=$AHEAD" >> "$GITHUB_OUTPUT"
           fi
 
   build:
-    name: Build bundle (${{ matrix.os }})
+    name: Build bundle
     needs: check-changes
     if: needs.check-changes.outputs.changed == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.force == true || github.event.inputs.force == 'true'))
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: write
-    env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: 'true'
-      SCCACHE_CACHE_SIZE: '2G'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
     steps:
-      - name: Checkout OpenVCS-Plugin-Git (target ref)
+      - name: Checkout (target ref)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ env.TARGET_REF }}
-          path: OpenVCS-Plugin-Git
           fetch-depth: 0
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
+      - name: Setup Node
+        uses: actions/setup-node@v6
         with:
-          targets: wasm32-wasip1
+          node-version: 24
+          cache: npm
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          workspaces: |
-            OpenVCS-Plugin-Git
+      - name: Package plugin (.ovcsp)
+        run: npm run dist
 
-      - name: Install cargo-openvcs (unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: cargo install openvcs-sdk --locked --bin cargo-openvcs
-
-      - name: Install cargo-openvcs (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: cargo install openvcs-sdk --locked --bin cargo-openvcs
-
-      - name: Build + package (.ovcsp) (unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: OpenVCS-Plugin-Git
-        run: |
-          set -euo pipefail
-          ARCH="$(uname -m)"
-          cargo openvcs dist --plugin-dir . --out dist
-          mv "dist/openvcs.git.ovcsp" "dist/openvcs.git-${{ runner.os }}-${ARCH}.ovcsp"
-
-      - name: Build + package (.ovcsp) (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: OpenVCS-Plugin-Git
-        run: |
-          $arch = $env:PROCESSOR_ARCHITECTURE
-          if ([string]::IsNullOrWhiteSpace($arch)) { $arch = "x86_64" }
-          cargo openvcs dist --plugin-dir . --out dist
-          Move-Item -Path "dist\\openvcs.git.ovcsp" -Destination ("dist\\openvcs.git-Windows-{0}.ovcsp" -f $arch) -Force
-
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: openvcs-git-nightly-${{ runner.os }}
-          path: |
-            OpenVCS-Plugin-Git/dist/openvcs.git-*.ovcsp
+          name: openvcs-git-nightly-ubuntu
+          path: dist/openvcs.git.ovcsp
 
   release:
     name: Publish rolling nightly prerelease
@@ -198,9 +156,10 @@ jobs:
             core.setOutput('compare_url', compare_url);
             core.setOutput('changelog', changelog);
 
-      - name: Download artifacts
+      - name: Download artifact
         uses: actions/download-artifact@v7
         with:
+          name: openvcs-git-nightly-ubuntu
           path: artifacts
 
       - name: Remove existing 'openvcs-git-nightly' release & tag (if any)
@@ -233,9 +192,9 @@ jobs:
             Since: ${{ needs.check-changes.outputs.since_sha }}
             Ahead (relevant commits): ${{ needs.check-changes.outputs.ahead_count }}
             Commit: ${{ steps.meta.outputs.branch_sha }} (${{ env.TARGET_REF }}@${{ steps.meta.outputs.short_sha }})
-            Runner: ${{ runner.os }} • Run #${{ github.run_number }}
+            Runner: ubuntu-latest • Run #${{ github.run_number }}
 
             Changes since last nightly:
             ${{ steps.meta.outputs.changelog }}
           files: |
-            artifacts/**/*
+            artifacts/*

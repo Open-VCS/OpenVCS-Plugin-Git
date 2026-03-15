@@ -36,7 +36,7 @@ jobs:
         include:
           - language: actions
             build-mode: none
-          - language: rust
+          - language: javascript
             build-mode: none
 
     steps:
@@ -61,4 +61,3 @@ jobs:
         uses: github/codeql-action/analyze@45cbd0c69e560cd9e7cd7f8c32362050c9b7ded2 # v3
         with:
           category: "/language:${{ matrix.language }}"
-
