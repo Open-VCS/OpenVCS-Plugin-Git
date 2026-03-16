@@ -5,7 +5,8 @@ This document describes the Git backend implementation in `Git/`.
 ## Responsibility
 
 The plugin implements the backend JSON-RPC contract (`plugin.*` and `vcs.*`)
-and exposes a single VCS backend id: `git`.
+through `@openvcs/sdk/runtime` delegates and exposes a single VCS backend id:
+`git`.
 
 ## Command execution
 
@@ -14,6 +15,9 @@ and exposes a single VCS backend id: `git`.
 - The plugin currently uses System Git only.
 - TypeScript source lives under `src/` and compiles into the packaged `bin/`
   runtime files.
+- Shared transport, JSON-RPC framing, host notifications, and exact-method
+  delegate dispatch now live in `SDK/`; this module keeps only Git session
+  state, git subprocess execution, parsers, and Git-specific `vcs.*` handlers.
 - Status reads use `git status --porcelain=1 --branch -z -uall` so file paths are
   NUL-delimited and not C-quoted.
 - For rename and copy records, the porcelain format includes two NUL-terminated
@@ -45,5 +49,6 @@ openvcs.git/
   openvcs.plugin.json
   bin/openvcs-git-plugin.js
   bin/plugin-helpers.js
+  bin/plugin-request-handler.js
   bin/plugin-runtime.js
 ```

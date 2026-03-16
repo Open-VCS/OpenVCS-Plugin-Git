@@ -12,11 +12,11 @@
     "test": "tsx --test test/*.test.ts",
     "prepack": "npm run build",
     "build:plugin": "tsc -p tsconfig.json",
-    "build": "openvcs build",
-    "dist": "openvcs dist --plugin-dir . --out dist"
+    "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build",
+    "dist": "node ./node_modules/@openvcs/sdk/bin/openvcs.js dist --plugin-dir . --out dist"
   },
   "devDependencies": {
-    "@openvcs/sdk": "^0.2.2",
+    "@openvcs/sdk": "^0.2",
     "@types/node": "^25.5.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
