@@ -37,6 +37,12 @@ function closeSession(sessionId: unknown): void {
   sessions.delete(key);
 }
 
+/** Resets all session state. Useful for testing. */
+export function resetSessions(): void {
+  nextSessionId = 1;
+  sessions.clear();
+}
+
 /** Resolves a required session or throws a host-facing plugin error. */
 function requireSession(sessionId: unknown): GitSession {
   const session = sessions.get(asString(sessionId));
@@ -64,8 +70,18 @@ function runGit(
     maxBuffer: 16 * 1024 * 1024,
   });
 
+  if (result.status === null) {
+    const signal = result.signal ?? 'unknown';
+    console.warn(`git process killed/crashed (signal: ${signal}) in ${cwd}: ${args.join(' ')}`);
+    return {
+      status: -1,
+      stdout: asString(result.stdout),
+      stderr: asString(result.stderr) || `Process terminated by signal: ${signal}`,
+    };
+  }
+
   return {
-    status: typeof result.status === 'number' ? result.status : -1,
+    status: result.status,
     stdout: asString(result.stdout),
     stderr: asString(result.stderr),
   };
