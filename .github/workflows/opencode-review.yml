@@ -6,7 +6,12 @@ on:
 
 jobs:
   review:
-    if: github.actor == 'Jordonbc' && github.event.pull_request.user.login == 'Jordonbc'
+    if: |
+      github.event.pull_request.user.login == 'Jordonbc' &&
+      (
+        github.actor == 'Jordonbc' ||
+        github.actor == 'opencode-agent[bot]'
+      )
     runs-on: ubuntu-latest
     permissions:
       id-token: write
