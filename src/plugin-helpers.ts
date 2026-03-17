@@ -3,7 +3,6 @@
 
 import type {
   CommitEntry,
-  PluginFailure,
   RequestParams,
   StatusFileEntry,
   StatusParseResult,
@@ -42,28 +41,6 @@ export function asStringArray(value: unknown): string[] {
   }
 
   return value.map((entry) => asString(entry)).filter(Boolean);
-}
-
-/** Builds the host-understood plugin failure payload for operational errors. */
-export function pluginError(code: string, message: string): PluginFailure {
-  return {
-    code: -32001,
-    message,
-    data: {
-      code,
-      message,
-    },
-  };
-}
-
-/** Returns whether the thrown value is a host-facing plugin failure. */
-export function isPluginFailure(value: unknown): value is PluginFailure {
-  if (value == null || typeof value !== 'object') {
-    return false;
-  }
-
-  const candidate = value as Partial<PluginFailure>;
-  return candidate.code === -32001 && typeof candidate.message === 'string';
 }
 
 /** Adds a trimmed string argument when a value is present. */
