@@ -492,6 +492,7 @@ export function createGitVcsDelegates(
     },
 
     async 'vcs.get_conflict_details'(params) {
+      requireSessionPath(dependencies, params.session_id);
       return {
         path: asString(params.path),
         ours: null,

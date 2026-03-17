@@ -74,7 +74,7 @@ function runGit(
     const signal = result.signal ?? 'unknown';
     console.warn(`git process killed/crashed (signal: ${signal}) in ${cwd}: ${args.join(' ')}`);
     return {
-      status: -1,
+      status: -2,
       stdout: asString(result.stdout),
       stderr: asString(result.stderr) || `Process terminated by signal: ${signal}`,
     };
@@ -97,10 +97,11 @@ function runGitChecked(
   const output = runGit(args, cwd, options);
 
   if (output.status !== 0) {
+    const exitInfo = output.status === -2 ? ` (signal: ${output.stderr})` : ` (exit code: ${output.status})`;
     const message =
       output.stderr.trim() ||
       output.stdout.trim() ||
-      `git exited with code ${output.status}`;
+      `git ${args.join(' ')}${exitInfo}`;
     throw pluginError(errorCode, message);
   }
 
