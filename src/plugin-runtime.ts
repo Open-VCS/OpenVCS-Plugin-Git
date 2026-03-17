@@ -12,7 +12,9 @@ import { asString } from './plugin-helpers.js';
 import { createGitVcsDelegates } from './plugin-request-handler.js';
 import type { GitCommandResult, GitSession, RunGitOptions } from './plugin-types.js';
 
-/** Stores the next session id allocated for `vcs.open`. */
+/** Stores the next session id allocated for `vcs.open`. Allocated once per plugin runtime instance
+ * and persists for the lifetime of the process. Session IDs are opaque integers assigned
+ * sequentially starting from 1. */
 let nextSessionId = 1;
 
 /** Stores all active repository sessions keyed by session id. */
@@ -28,7 +30,11 @@ function allocateSession(session: GitSession): string {
 
 /** Removes an existing repository session. */
 function closeSession(sessionId: unknown): void {
-  sessions.delete(asString(sessionId));
+  const key = asString(sessionId);
+  if (!sessions.has(key)) {
+    throw pluginError('vcs-invalid-session', `session '${key}' not found`);
+  }
+  sessions.delete(key);
 }
 
 /** Resolves a required session or throws a host-facing plugin error. */
@@ -59,7 +65,7 @@ function runGit(
   });
 
   return {
-    status: typeof result.status === 'number' ? result.status : 1,
+    status: typeof result.status === 'number' ? result.status : -1,
     stdout: asString(result.stdout),
     stderr: asString(result.stderr),
   };

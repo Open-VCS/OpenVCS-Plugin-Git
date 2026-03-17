@@ -403,20 +403,6 @@ export function createGitVcsDelegates(
       return null;
     },
 
-    async 'vcs.fetch_with_options'(params, context) {
-      const cwd = requireSessionPath(dependencies, params.session_id);
-      runNetworkCommand(
-        dependencies,
-        buildFetchArgs(params),
-        cwd,
-        'vcs-fetch-failed',
-        context,
-        asString(params.session_id),
-        'fetch',
-      );
-      return null;
-    },
-
     async 'vcs.push'(params, context) {
       const cwd = requireSessionPath(dependencies, params.session_id);
       runNetworkCommand(
@@ -506,6 +492,7 @@ export function createGitVcsDelegates(
     },
 
     async 'vcs.get_conflict_details'(params) {
+      const cwd = requireSessionPath(dependencies, params.session_id);
       return {
         path: asString(params.path),
         ours: null,
@@ -518,10 +505,14 @@ export function createGitVcsDelegates(
 
     async 'vcs.checkout_conflict_side'(params) {
       const cwd = requireSessionPath(dependencies, params.session_id);
-      const side =
-        asTrimmedString(params.side).toLowerCase() === 'theirs'
-          ? '--theirs'
-          : '--ours';
+      const sideInput = asTrimmedString(params.side).toLowerCase();
+      if (sideInput !== 'ours' && sideInput !== 'theirs') {
+        throw pluginError(
+          'vcs-invalid-params',
+          "side must be 'ours' or 'theirs'",
+        );
+      }
+      const side = sideInput === 'theirs' ? '--theirs' : '--ours';
       const path = asString(params.path);
       dependencies.runGitChecked(
         ['checkout', side, '--', path],
@@ -671,7 +662,8 @@ export function createGitVcsDelegates(
         ['rev-parse', '--abbrev-ref', `${asString(params.branch)}@{upstream}`],
         cwd,
       );
-      return output.status === 0 ? output.stdout.trim() : null;
+      if (output.status === 0) return output.stdout.trim();
+      return null;
     },
 
     async 'vcs.hard_reset_head'(params) {
