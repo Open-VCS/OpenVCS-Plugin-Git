@@ -37,7 +37,7 @@ function closeSession(sessionId: unknown): void {
   sessions.delete(key);
 }
 
-/** Resets all session state. Useful for testing. */
+/** Resets all session state. Useful for testing to ensure clean state between test runs. */
 export function resetSessions(): void {
   nextSessionId = 1;
   sessions.clear();
