@@ -510,7 +510,9 @@ export function createGitVcsDelegates(
       }
 
       const lfsPointerRegex = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/;
-      const lfs_pointer = lfsPointerRegex.test(ours.stdout) || lfsPointerRegex.test(theirs.stdout);
+      const lfs_pointer = lfsPointerRegex.test(ours.stdout) || lfsPointerRegex.test(theirs.stdout) ||
+        ours.stdout.includes('version https://git-lfs.github.com/spec/v1') ||
+        theirs.stdout.includes('version https://git-lfs.github.com/spec/v1');
       const binary = !lfs_pointer && (ours.status === 0 ? ours.stdout.startsWith('Binary\0') : theirs.stdout.startsWith('Binary\0'));
 
       return {
