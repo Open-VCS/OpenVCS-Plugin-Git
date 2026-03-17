@@ -492,14 +492,34 @@ export function createGitVcsDelegates(
     },
 
     async 'vcs.get_conflict_details'(params) {
-      requireSessionPath(dependencies, params.session_id);
+      const cwd = requireSessionPath(dependencies, params.session_id);
+      const path = asString(params.path);
+
+      const conflictStatus = dependencies.runGit(['ls-files', '-u', '--', path], cwd);
+      if (conflictStatus.stdout.trim() === '') {
+        return { path, ours: null, theirs: null, base: null, binary: false, lfs_pointer: false };
+      }
+
+      const base = dependencies.runGit(['show', `:1:${path}`], cwd);
+      const ours = dependencies.runGit(['show', `:2:${path}`], cwd);
+      const theirs = dependencies.runGit(['show', `:3:${path}`], cwd);
+
+      const hasConflict = ours.status === 0 || theirs.status === 0;
+      if (!hasConflict) {
+        return { path, ours: null, theirs: null, base: null, binary: false, lfs_pointer: false };
+      }
+
+      const lfsPointerRegex = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/;
+      const lfs_pointer = lfsPointerRegex.test(ours.stdout) || lfsPointerRegex.test(theirs.stdout);
+      const binary = !lfs_pointer && (ours.status === 0 ? ours.stdout.startsWith('Binary\0') : theirs.stdout.startsWith('Binary\0'));
+
       return {
-        path: asString(params.path),
-        ours: null,
-        theirs: null,
-        base: null,
-        binary: false,
-        lfs_pointer: false,
+        path,
+        base: base.status === 0 ? base.stdout : null,
+        ours: ours.status === 0 ? ours.stdout : null,
+        theirs: theirs.status === 0 ? theirs.stdout : null,
+        binary,
+        lfs_pointer,
       };
     },
 
