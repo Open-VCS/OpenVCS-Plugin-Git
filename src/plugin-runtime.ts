@@ -3,13 +3,9 @@
 
 import { spawnSync } from 'node:child_process';
 
-import {
-  createPluginRuntime,
-  pluginError,
-} from '@openvcs/sdk/runtime';
+import { pluginError } from '@openvcs/sdk/runtime';
 
 import { asString } from './plugin-helpers.js';
-import { createGitVcsDelegates } from './plugin-request-handler.js';
 import type { GitCommandResult, GitSession, RunGitOptions } from './plugin-types.js';
 
 /** Stores the next session id allocated for `vcs.open`. Allocated once per plugin runtime instance
@@ -21,7 +17,7 @@ let nextSessionId = 1;
 const sessions = new Map<string, GitSession>();
 
 /** Allocates a new repository session and returns its generated id. */
-function allocateSession(session: GitSession): string {
+export function allocateSession(session: GitSession): string {
   const sessionId = String(nextSessionId);
   nextSessionId += 1;
   sessions.set(sessionId, session);
@@ -29,7 +25,7 @@ function allocateSession(session: GitSession): string {
 }
 
 /** Removes an existing repository session. */
-function closeSession(sessionId: unknown): void {
+export function closeSession(sessionId: unknown): void {
   const key = asString(sessionId);
   if (!sessions.has(key)) {
     throw pluginError('vcs-invalid-session', `session '${key}' not found`);
@@ -44,7 +40,7 @@ export function resetSessions(): void {
 }
 
 /** Resolves a required session or throws a host-facing plugin error. */
-function requireSession(sessionId: unknown): GitSession {
+export function requireSession(sessionId: unknown): GitSession {
   const session = sessions.get(asString(sessionId));
 
   if (!session) {
@@ -58,7 +54,7 @@ function requireSession(sessionId: unknown): GitSession {
 }
 
 /** Executes a git command and returns its captured outputs. */
-function runGit(
+export function runGit(
   args: string[],
   cwd: string,
   options: RunGitOptions = {},
@@ -88,7 +84,7 @@ function runGit(
 }
 
 /** Executes a git command and raises a host-facing plugin error on failure. */
-function runGitChecked(
+export function runGitChecked(
   args: string[],
   cwd: string,
   errorCode: string,
@@ -106,18 +102,4 @@ function runGitChecked(
   }
 
   return output;
-}
-
-/** Creates the composed Git plugin runtime backed by the SDK transport layer. */
-export function createGitPluginRuntime() {
-  return createPluginRuntime({
-    logTarget: 'openvcs.git.plugin',
-    vcs: createGitVcsDelegates({
-      allocateSession,
-      closeSession,
-      requireSession,
-      runGit,
-      runGitChecked,
-    }),
-  });
 }
