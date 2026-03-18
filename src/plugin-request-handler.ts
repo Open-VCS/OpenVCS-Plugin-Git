@@ -443,8 +443,7 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    const options = asRecord(params);
-    git.mergeContinue(asTrimmedString(options.message) || undefined);
+    git.mergeContinue();
     return null;
   }
 
@@ -481,8 +480,7 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    const options = asRecord(params);
-    git.hardResetHead(asTrimmedString(options.ref) || 'HEAD');
+    git.hardResetHead('HEAD');
     return null;
   }
 
