@@ -3,6 +3,7 @@
 
 import { spawnSync } from 'node:child_process';
 
+import { pluginError } from '@openvcs/sdk/runtime';
 import type {
   CommitEntry,
   StatusFileEntry,
@@ -106,7 +107,7 @@ export class GitCommand {
         output.stderr.trim() ||
         output.stdout.trim() ||
         `git ${args.join(' ')}${exitInfo}`;
-      throw { code: errorCode, message };
+      throw pluginError(errorCode, message);
     }
 
     return output;
@@ -115,11 +116,14 @@ export class GitCommand {
   version(): { result: GitCommandResult; version: string; major: number; minor: number } {
     const result = this.run(['--version']);
     const versionMatch = result.stdout.match(/git version (\d+)\.(\d+)/);
-    const major = versionMatch ? parseInt(versionMatch[1], 10) : 0;
-    const minor = versionMatch ? parseInt(versionMatch[2], 10) : 0;
+    if (!versionMatch) {
+      throw new Error(`Unable to parse Git version: ${result.stdout.trim()}`);
+    }
+    const major = parseInt(versionMatch[1], 10);
+    const minor = parseInt(versionMatch[2], 10);
     return {
       result,
-      version: versionMatch ? versionMatch[0] : 'unknown',
+      version: versionMatch[0],
       major,
       minor,
     };
@@ -159,11 +163,9 @@ export class GitCommand {
     const branches: Array<{ name: string; current: boolean }> = [];
 
     for (const line of result.stdout.split('\n').filter(Boolean)) {
-      const isCurrent = line.endsWith('*');
-      const baseLine = isCurrent ? line.slice(0, -1) : line;
-      const name = baseLine.trim();
-      if (name) {
-        branches.push({ name, current: name === current });
+      const trimmed = line.replace('*', '').trim();
+      if (trimmed) {
+        branches.push({ name: trimmed, current: trimmed === current });
       }
     }
 
@@ -258,7 +260,7 @@ export class GitCommand {
   }
 
   commitIndex(): GitCommandResult {
-    return this.runChecked(['commit', '-a', '-m', '暂存更改'], 'git-commit-failed');
+    return this.runChecked(['commit', '-a', '-m', 'Stage changes'], 'git-commit-failed');
   }
 
   listCommits(options: ListCommitsOptions = {}): { commits: CommitEntry[]; exitCode: number } {

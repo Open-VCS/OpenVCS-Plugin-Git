@@ -18,7 +18,10 @@ function createGitCommand(cwd: string): GitCommand {
   return new GitCommand(cwd);
 }
 
-/** Registers the Git plugin handlers before the SDK runtime starts. */
+/** Registers the Git plugin with the OpenVCS SDK runtime.
+ * 
+ * Provides VCS capabilities (branches, commits, status, etc.) for Git repositories.
+ * The plugin delegates are created with session management and Git command execution. */
 export const PluginDefinition: PluginModuleDefinition = {
   logTarget: 'openvcs.git.plugin',
   vcs: createGitVcsDelegates({
@@ -29,8 +32,12 @@ export const PluginDefinition: PluginModuleDefinition = {
   }),
 };
 
-/** Runs Git plugin startup work before the generated runtime begins processing requests. */
-export async function OnPluginStart(): Promise<void> {
+/** Validates Git installation and version at plugin startup.
+ * 
+ * Runs before the runtime begins processing requests. Throws if Git is not
+ * installed or version is below 2.20.
+ * @throws Error if Git is not available or version is unsupported */
+export function OnPluginStart(): void {
   const git = new GitCommand(process.cwd());
   const { major, minor } = git.version();
 

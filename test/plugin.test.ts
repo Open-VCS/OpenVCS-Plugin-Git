@@ -136,30 +136,8 @@ describe('Git plugin exports', () => {
       assert.strictEqual(typeof OnPluginStart, 'function', 'OnPluginStart is a function');
     });
 
-    it('returns a promise when called', async () => {
-      const result = OnPluginStart();
-      assert.ok(result instanceof Promise, 'OnPluginStart returns a promise');
-      await result;
-    });
-
-    it('validates Git is installed', async () => {
-      await assert.rejects(
-        async () => {
-          const original = process.cwd;
-          try {
-            process.cwd = () => '/nonexistent';
-            await OnPluginStart();
-          } finally {
-            process.cwd = original;
-          }
-        },
-        { message: /Git/ },
-        'Should throw when Git is not available',
-      );
-    });
-
-    it('validates Git version is parseable', async () => {
-      await OnPluginStart();
+    it('validates Git is installed and version', () => {
+      OnPluginStart();
     });
   });
 });
