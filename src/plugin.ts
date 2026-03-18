@@ -3,7 +3,10 @@
 
 import type { PluginModuleDefinition } from '@openvcs/sdk/runtime';
 
-import { createGitVcsDelegates } from './plugin-request-handler.js';
+import {
+  GitVcsDelegates,
+  type GitRuntimeDependencies,
+} from './plugin-request-handler.js';
 
 import {
   allocateSession,
@@ -18,18 +21,22 @@ function createGitCommand(cwd: string): GitCommand {
   return new GitCommand(cwd);
 }
 
-/** Registers the Git plugin with the OpenVCS SDK runtime.
- * 
- * Provides VCS capabilities (branches, commits, status, etc.) for Git repositories.
- * The plugin delegates are created with session management and Git command execution. */
-export const PluginDefinition: PluginModuleDefinition = {
-  logTarget: 'openvcs.git.plugin',
-  vcs: createGitVcsDelegates({
+/** Returns the runtime services passed to the Git VCS delegate class. */
+function createGitRuntimeDependencies(): GitRuntimeDependencies {
+  return {
     allocateSession,
     closeSession,
     requireSession,
     createGitCommand,
-  }),
+  };
+}
+
+/** Registers the Git plugin with the OpenVCS SDK runtime.
+ * 
+ * Provides Git runtime options up front and defers `vcs.*` delegate registration
+ * until `OnPluginStart()` validates the local Git installation. */
+export const PluginDefinition: PluginModuleDefinition = {
+  logTarget: 'openvcs.git.plugin',
 };
 
 /** Validates Git installation and version at plugin startup.
@@ -44,4 +51,7 @@ export function OnPluginStart(): void {
   if (major < 2 || (major === 2 && minor < 20)) {
     throw new Error(`Git 2.20+ required, found ${major}.${minor}`);
   }
+
+  const delegates = new GitVcsDelegates(createGitRuntimeDependencies());
+  PluginDefinition.vcs = delegates.toDelegates();
 }

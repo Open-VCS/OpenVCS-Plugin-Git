@@ -100,14 +100,15 @@ describe('Git plugin helpers', () => {
 
 describe('Git plugin exports', () => {
   describe('PluginDefinition', () => {
-    it('is exported and has vcs delegates', () => {
+    it('is exported with the configured log target', () => {
       assert.ok(PluginDefinition, 'PluginDefinition is exported');
-      assert.ok(PluginDefinition.vcs, 'PluginDefinition has vcs delegates');
       assert.ok(PluginDefinition.logTarget, 'PluginDefinition has logTarget');
       assert.strictEqual(PluginDefinition.logTarget, 'openvcs.git.plugin');
     });
 
-    it('has all required vcs delegate methods', () => {
+    it('registers vcs delegates during plugin startup', () => {
+      OnPluginStart();
+
       const vcs = PluginDefinition.vcs;
       assert.ok(vcs, 'vcs delegates exist');
       assert.ok(vcs['vcs.open'], 'vcs.open delegate exists');
@@ -136,8 +137,9 @@ describe('Git plugin exports', () => {
       assert.strictEqual(typeof OnPluginStart, 'function', 'OnPluginStart is a function');
     });
 
-    it('validates Git is installed and version', () => {
+    it('validates Git and attaches the delegate map', () => {
       OnPluginStart();
+      assert.ok(PluginDefinition.vcs, 'PluginDefinition.vcs is populated at startup');
     });
   });
 });
