@@ -9,9 +9,9 @@ import {
   buildPullFfOnlyArgs,
   buildPushArgs,
   parseStatusOutput,
-} from '../src/plugin-helpers.ts';
+} from '../src/plugin-helpers.js';
 
-import { PluginDefinition, OnPluginStart } from '../src/plugin.ts';
+import { PluginDefinition, OnPluginStart } from '../src/plugin.js';
 
 describe('Git plugin helpers', () => {
   describe('parseStatusOutput', () => {
@@ -156,6 +156,10 @@ describe('Git plugin exports', () => {
         { message: /Git is not installed/ },
         'Should throw when Git is not available',
       );
+    });
+
+    it('validates Git version is parseable', async () => {
+      await OnPluginStart();
     });
   });
 });

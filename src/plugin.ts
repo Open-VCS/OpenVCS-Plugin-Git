@@ -33,11 +33,13 @@ export async function OnPluginStart(): Promise<void> {
   }
 
   const versionMatch = gitVersion.stdout.match(/git version (\d+)\.(\d+)/);
-  if (versionMatch) {
-    const major = parseInt(versionMatch[1], 10);
-    const minor = parseInt(versionMatch[2], 10);
-    if (major < 2 || (major === 2 && minor < 20)) {
-      throw new Error(`Git 2.20+ required, found ${versionMatch[0]}`);
-    }
+  if (!versionMatch) {
+    throw new Error('Unable to parse Git version');
+  }
+
+  const major = parseInt(versionMatch[1], 10);
+  const minor = parseInt(versionMatch[2], 10);
+  if (major < 2 || (major === 2 && minor < 20)) {
+    throw new Error(`Git 2.20+ required, found ${versionMatch[0]}`);
   }
 }
