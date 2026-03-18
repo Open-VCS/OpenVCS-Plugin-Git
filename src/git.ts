@@ -163,7 +163,7 @@ export class GitCommand {
     const branches: Array<{ name: string; current: boolean }> = [];
 
     for (const line of result.stdout.split('\n').filter(Boolean)) {
-      const trimmed = line.replace('*', '').trim();
+      const trimmed = line.replaceAll('*', '').trim();
       if (trimmed) {
         branches.push({ name: trimmed, current: trimmed === current });
       }
