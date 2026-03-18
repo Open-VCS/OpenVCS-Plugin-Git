@@ -143,7 +143,6 @@ export function createGitVcsDelegates(
 
     async 'vcs.list_local_branches'(params) {
       const git = requireGit(dependencies, params.session_id);
-      const currentBranch = git.currentBranch();
       const raw = git.runChecked(
         ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'],
         'vcs-list-branches-failed',
