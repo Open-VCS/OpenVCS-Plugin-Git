@@ -145,7 +145,7 @@ export class GitCommand {
 
     for (const line of result.stdout.split('\n').filter(Boolean)) {
       const isCurrent = line.endsWith('*');
-      const name = line.replace('*', '').trim();
+      const name = (isCurrent ? line.slice(0, -1) : line).trim();
       if (name) {
         branches.push({ name, current: name === current || (isCurrent && name === current) });
       }
@@ -161,7 +161,7 @@ export class GitCommand {
 
     for (const line of result.stdout.split('\n').filter(Boolean)) {
       const isCurrent = line.endsWith('*');
-      const name = line.replace('*', '').trim();
+      const name = (isCurrent ? line.slice(0, -1) : line).trim();
       if (name) {
         branches.push({ name, current: name === current });
       }
