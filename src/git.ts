@@ -11,9 +11,7 @@ import type {
 } from '@openvcs/sdk/types';
 import type { GitCommandResult, RunGitOptions } from './plugin-types.js';
 import {
-  asNumber,
   asString,
-  asTrimmedString,
   buildFetchArgs,
   buildPullFfOnlyArgs,
   buildPushArgs,
