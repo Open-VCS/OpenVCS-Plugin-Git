@@ -299,7 +299,6 @@ export class GitCommand {
     }
 
     const oursContent = ours.stdout;
-    const theirsContent = theirs.stdout;
     const lfs_pointer =
       ours.stdout.includes('version https://git-lfs.github.com/spec/v1') ||
       theirs.stdout.includes('version https://git-lfs.github.com/spec/v1');
