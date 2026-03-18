@@ -230,7 +230,12 @@ export function createGitVcsDelegates(
     async 'vcs.commit_index'(params) {
       const git = requireGit(dependencies, params.session_id);
       const result = git.runChecked(['rev-parse', 'HEAD'], 'git-commit-failed');
-      git.commitIndex();
+      git.commitIndex(
+        asTrimmedString(params.message),
+        asTrimmedString(params.name),
+        asTrimmedString(params.email),
+        asStringArray(params.paths),
+      );
       return result.stdout.trim();
     },
 

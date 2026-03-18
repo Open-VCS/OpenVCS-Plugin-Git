@@ -259,8 +259,25 @@ export class GitCommand {
     return this.runChecked(['commit', '-m', message], 'git-commit-failed');
   }
 
-  commitIndex(): GitCommandResult {
-    return this.runChecked(['commit', '-a', '-m', 'Stage changes'], 'git-commit-failed');
+  commitIndex(message?: string, name?: string, email?: string, paths?: string[]): GitCommandResult {
+    const args = ['commit'];
+    
+    if (paths && paths.length > 0) {
+      args.push('--', ...paths);
+    } else {
+      args.push('-a');
+    }
+    
+    const commitMessage = message || 'Stage changes';
+    
+    const execArgs = [
+      ...(name ? ['-c', `user.name=${name}`] : []),
+      ...(email ? ['-c', `user.email=${email}`] : []),
+      ...args,
+      '-m', commitMessage,
+    ];
+    
+    return this.runChecked(execArgs, 'git-commit-failed');
   }
 
   listCommits(options: ListCommitsOptions = {}): { commits: CommitEntry[]; exitCode: number } {
