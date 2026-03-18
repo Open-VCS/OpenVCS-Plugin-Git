@@ -39,6 +39,7 @@ The plugin stores lightweight runtime state:
 
 - `module.exec`: `openvcs-git-plugin.js`
 - `module.vcs_backends`: `git`
+- `bin/plugin.js`: compiled author module exporting `OnPluginStart()`
 
 ## Packaging
 
@@ -47,8 +48,15 @@ The SDK packages this plugin into an `.ovcsp` bundle with:
 ```text
 openvcs.git/
   openvcs.plugin.json
-  bin/openvcs-git-plugin.js
+  bin/openvcs-git-plugin.js  (SDK-generated bootstrap, entry point)
+  bin/plugin.js              (authored module with PluginDefinition + OnPluginStart)
   bin/plugin-helpers.js
   bin/plugin-request-handler.js
   bin/plugin-runtime.js
 ```
+
+`openvcs build` now generates `bin/openvcs-git-plugin.js` as the SDK-owned
+bootstrap (referenced by `module.exec` in the manifest). The authored Git module
+lives in `src/plugin.ts` and compiles to `bin/plugin.js`, where `PluginDefinition`
+declares the Git `vcs.*` delegates and runtime options while `OnPluginStart()` runs
+validation at startup.
