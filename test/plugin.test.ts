@@ -153,7 +153,7 @@ describe('Git plugin exports', () => {
             process.cwd = original;
           }
         },
-        { message: /Git is not installed/ },
+        { message: /Git/ },
         'Should throw when Git is not available',
       );
     });

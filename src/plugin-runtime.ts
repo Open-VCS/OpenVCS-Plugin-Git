@@ -1,12 +1,10 @@
 // Copyright © 2025-2026 OpenVCS Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { spawnSync } from 'node:child_process';
-
 import { pluginError } from '@openvcs/sdk/runtime';
 
 import { asString } from './plugin-helpers.js';
-import type { GitCommandResult, GitSession, RunGitOptions } from './plugin-types.js';
+import type { GitSession } from './plugin-types.js';
 
 /** Stores the next session id allocated for `vcs.open`. Allocated once per plugin runtime instance
  * and persists for the lifetime of the process. Session IDs are opaque integers assigned
@@ -51,55 +49,4 @@ export function requireSession(sessionId: unknown): GitSession {
   }
 
   return session;
-}
-
-/** Executes a git command and returns its captured outputs. */
-export function runGit(
-  args: string[],
-  cwd: string,
-  options: RunGitOptions = {},
-): GitCommandResult {
-  const result = spawnSync('git', args, {
-    cwd,
-    input: typeof options.stdin === 'string' ? options.stdin : undefined,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
-
-  if (result.status === null) {
-    const signal = result.signal ?? 'unknown';
-    console.warn(`git process killed/crashed (signal: ${signal}) in ${cwd}: ${args.join(' ')}`);
-    return {
-      status: -2,
-      stdout: asString(result.stdout),
-      stderr: asString(result.stderr) || `Process terminated by signal: ${signal}`,
-    };
-  }
-
-  return {
-    status: result.status,
-    stdout: asString(result.stdout),
-    stderr: asString(result.stderr),
-  };
-}
-
-/** Executes a git command and raises a host-facing plugin error on failure. */
-export function runGitChecked(
-  args: string[],
-  cwd: string,
-  errorCode: string,
-  options: RunGitOptions = {},
-): GitCommandResult {
-  const output = runGit(args, cwd, options);
-
-  if (output.status !== 0) {
-    const exitInfo = output.status === -2 ? ` (signal: ${output.stderr})` : ` (exit code: ${output.status})`;
-    const message =
-      output.stderr.trim() ||
-      output.stdout.trim() ||
-      `git ${args.join(' ')}${exitInfo}`;
-    throw pluginError(errorCode, message);
-  }
-
-  return output;
 }
