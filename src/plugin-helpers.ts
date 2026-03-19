@@ -172,12 +172,13 @@ export function parseCommits(raw: string): CommitEntry[] {
     .filter(Boolean);
 
   return records.map((record) => {
-    const [id, msg, author, meta] = record.split('\u001f');
+    const [id, msg, author, meta, parent_oid = ''] = record.split('\u0000');
     return {
       id: asString(id),
       msg: asString(msg),
       author: asString(author),
       meta: asString(meta),
+      parent_oid: parent_oid || undefined,
     };
   });
 }

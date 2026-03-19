@@ -18,6 +18,9 @@ through `@openvcs/sdk/runtime` delegates and exposes a single VCS backend id:
 - Shared transport, JSON-RPC framing, host notifications, and exact-method
   delegate dispatch now live in `SDK/`; this module keeps only Git session
   state, git subprocess execution, parsers, and Git-specific `vcs.*` handlers.
+- `src/plugin-request-handler.ts` now exports `GitVcsDelegates`, a
+  `VcsDelegateBase` subclass whose ordinary camelCase methods are mapped to the
+  exact `vcs.*` JSON-RPC method names consumed by the runtime.
 - Status reads use `git status --porcelain=1 --branch -z -uall` so file paths are
   NUL-delimited and not C-quoted.
 - For rename and copy records, the porcelain format includes two NUL-terminated
@@ -58,5 +61,6 @@ openvcs.git/
 `openvcs build` now generates `bin/openvcs-git-plugin.js` as the SDK-owned
 bootstrap (referenced by `module.exec` in the manifest). The authored Git module
 lives in `src/plugin.ts` and compiles to `bin/plugin.js`, where `PluginDefinition`
-declares the Git `vcs.*` delegates and runtime options while `OnPluginStart()` runs
-validation at startup.
+declares runtime options up front and `OnPluginStart()` validates Git, constructs
+`GitVcsDelegates`, and assigns `PluginDefinition.vcs = delegates.toDelegates()`
+before the SDK runtime starts processing requests.
