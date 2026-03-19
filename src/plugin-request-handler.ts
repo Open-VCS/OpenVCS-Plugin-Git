@@ -314,7 +314,13 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     const query = asRecord(params.query);
     const result = git.listCommits({
       branch: asTrimmedString(query.rev) || undefined,
-      parent: asNumber(query.limit, 0) || undefined,
+      skip: asNumber(query.skip, 0) || undefined,
+      limit: asNumber(query.limit, 0),
+      topo_order: query.topo_order as boolean ?? undefined,
+      include_merges: query.include_merges as boolean ?? undefined,
+      author_contains: asTrimmedString(query.author_contains) || undefined,
+      since_utc: asTrimmedString(query.since_utc) || undefined,
+      until_utc: asTrimmedString(query.until_utc) || undefined,
       path: asTrimmedString(query.path) || undefined,
     });
     return result.commits;
@@ -439,11 +445,11 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
   }
 
   override mergeContinue(
-    params: OpenVcs.VcsSessionParams,
+    params: OpenVcs.VcsMergeContinueParams,
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    git.mergeContinue();
+    git.mergeContinue(asTrimmedString(params.message) || undefined);
     return null;
   }
 
@@ -476,11 +482,11 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
   }
 
   override hardResetHead(
-    params: OpenVcs.VcsSessionParams,
+    params: OpenVcs.VcsHardResetHeadParams,
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    git.hardResetHead('HEAD');
+    git.hardResetHead(params.ref);
     return null;
   }
 

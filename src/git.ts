@@ -38,7 +38,13 @@ export interface PullOptions {
 
 export interface ListCommitsOptions {
   branch?: string;
-  parent?: number;
+  skip?: number;
+  limit?: number;
+  topo_order?: boolean;
+  include_merges?: boolean;
+  author_contains?: string;
+  since_utc?: string;
+  until_utc?: string;
   path?: string;
 }
 
@@ -281,11 +287,37 @@ export class GitCommand {
   }
 
   listCommits(options: ListCommitsOptions = {}): { commits: CommitEntry[]; exitCode: number } {
-    const args = ['log', '--all', '--topo-order', '--pretty=format:%H%f%S%x1f%aN%x1f%ad%x1f%an%x1e'];
-    
-    if (options.parent !== undefined && options.parent > 0) {
-      args.push(`-${options.parent}`);
+    const args = ['log', '--all'];
+
+    if (options.topo_order) {
+      args.push('--topo-order');
     }
+
+    if (options.limit !== undefined) {
+      args.push(`-${options.limit}`);
+    }
+
+    if (options.skip !== undefined) {
+      args.push(`--skip=${options.skip}`);
+    }
+
+    if (options.include_merges === false) {
+      args.push('--no-merges');
+    }
+
+    if (options.author_contains) {
+      args.push(`--author=${options.author_contains}`);
+    }
+
+    if (options.since_utc) {
+      args.push(`--since=${options.since_utc}`);
+    }
+
+    if (options.until_utc) {
+      args.push(`--until=${options.until_utc}`);
+    }
+
+    args.push('--pretty=format:%H%f%x00%aN%x00%aI%x00%P%x1e');
 
     if (options.branch) {
       args.push(options.branch);
@@ -356,8 +388,8 @@ export class GitCommand {
     this.runChecked(['apply', '-R', patch], 'git-apply-reverse-failed');
   }
 
-  hardResetHead(ref: string): void {
-    this.runChecked(['reset', '--hard', ref], 'git-reset-hard-failed');
+  hardResetHead(ref?: string): void {
+    this.runChecked(['reset', '--hard', ref ?? 'HEAD'], 'git-reset-hard-failed');
   }
 
   resetSoftTo(ref: string): void {
