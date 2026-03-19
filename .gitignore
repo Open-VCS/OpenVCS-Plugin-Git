@@ -1,2 +1,5 @@
 /target
 /dist
+/node_modules
+/tsconfig.tsbuildinfo
+/bin

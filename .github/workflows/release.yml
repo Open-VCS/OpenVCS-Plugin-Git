@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (default: openvcs-git-v<Cargo.toml version>)"
+        description: "Release tag (default: openvcs-git-v<manifest version>)"
         required: false
         type: string
       prerelease:
@@ -25,76 +25,34 @@ concurrency:
 
 jobs:
   build:
-    name: Build bundle (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Build bundle
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: write
-    env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: 'true'
-      SCCACHE_CACHE_SIZE: '2G'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
     steps:
-      - name: Checkout OpenVCS-Plugin-Git
+      - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          path: OpenVCS-Plugin-Git
           fetch-depth: 0
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
+      - name: Setup Node
+        uses: actions/setup-node@v6
         with:
-          targets: wasm32-wasip1
+          node-version: 24
+          cache: npm
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - name: Package plugin (.ovcsp)
+        run: npm run dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
         with:
-          workspaces: |
-            OpenVCS-Plugin-Git
-
-      - name: Install cargo-openvcs (unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: cargo install openvcs-sdk --locked --bin cargo-openvcs
-
-      - name: Install cargo-openvcs (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: cargo install openvcs-sdk --locked --bin cargo-openvcs
-
-      - name: Build + package (.ovcsp) (unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: OpenVCS-Plugin-Git
-        run: |
-          set -euo pipefail
-          ARCH="$(uname -m)"
-          cargo openvcs dist --plugin-dir . --out dist
-          mv "dist/openvcs.git.ovcsp" "dist/openvcs.git-${{ runner.os }}-${ARCH}.ovcsp"
-
-      - name: Build + package (.ovcsp) (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: OpenVCS-Plugin-Git
-        run: |
-          $arch = $env:PROCESSOR_ARCHITECTURE
-          if ([string]::IsNullOrWhiteSpace($arch)) { $arch = "x86_64" }
-          cargo openvcs dist --plugin-dir . --out dist
-          Move-Item -Path "dist\\openvcs.git.ovcsp" -Destination ("dist\\openvcs.git-Windows-{0}.ovcsp" -f $arch) -Force
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: openvcs-git-${{ runner.os }}
-          path: |
-            OpenVCS-Plugin-Git/dist/openvcs.git-*.ovcsp
+          name: openvcs-git-ubuntu
+          path: dist/openvcs.git.ovcsp
 
   release:
     name: Create GitHub Pre-release
@@ -120,26 +78,27 @@ jobs:
             exit 0
           fi
           TAG="$(python - <<'PY'
-          import tomllib
-          with open("Cargo.toml", "rb") as f:
-              data = tomllib.load(f)
-          ver = data["package"]["version"]
+          import json
+          with open("openvcs.plugin.json", "r") as f:
+              data = json.load(f)
+          ver = data["version"]
           print(f"openvcs-git-v{ver}")
           PY
           )"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Download artifacts
-        uses: actions/download-artifact@v7
+      - name: Download artifact
+        uses: actions/download-artifact@v8
         with:
+          name: openvcs-git-ubuntu
           path: artifacts
 
       - name: Create prerelease
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
-          prerelease: true
+          prerelease: ${{ inputs.prerelease || false }}
           generate_release_notes: true
           files: |
-            artifacts/**/*
+            artifacts/*

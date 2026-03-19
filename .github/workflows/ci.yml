@@ -5,17 +5,29 @@ on:
     branches: [Dev]
     paths:
       - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
       - 'openvcs.plugin.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'test/**'
+      - 'README.md'
+      - 'ARCHITECTURE.md'
+      - 'icon.png'
+      - 'LICENSE'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [Dev]
     paths:
       - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
       - 'openvcs.plugin.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'test/**'
+      - 'README.md'
+      - 'ARCHITECTURE.md'
+      - 'icon.png'
+      - 'LICENSE'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -27,53 +39,32 @@ permissions:
   contents: read
 
 jobs:
-  rust:
+  node:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: 'true'
-      SCCACHE_CACHE_SIZE: '2G'
+    timeout-minutes: 10
     steps:
-      - name: Checkout OpenVCS-Plugin-Git
+      - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          path: OpenVCS-Plugin-Git
           fetch-depth: 0
 
-      - name: Checkout OpenVCS-Core
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Setup Node
+        uses: actions/setup-node@v6
         with:
-          repository: ${{ github.repository_owner }}/OpenVCS-Core
-          path: OpenVCS-Core
-          fetch-depth: 0
+          node-version: 24
+          cache: npm
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
-        with:
-          components: rustfmt, clippy
-          targets: wasm32-wasip1
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          workspaces: OpenVCS-Plugin-Git
-
-      - name: Cargo fmt (check)
-        working-directory: OpenVCS-Plugin-Git
-        run: cargo fmt --all -- --check
-
-      - name: Cargo clippy
-        working-directory: OpenVCS-Plugin-Git
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Cargo check
-        working-directory: OpenVCS-Plugin-Git
-        run: cargo check --all-targets
+      - name: Lint (TypeScript type check)
+        run: npm run lint
 
       - name: Test
-        working-directory: OpenVCS-Plugin-Git
-        run: cargo test
+        run: npm test
+
+      - name: Package plugin (.ovcsp)
+        run: npm run dist
+
+      - name: Verify package
+        run: test -f dist/openvcs.git.ovcsp

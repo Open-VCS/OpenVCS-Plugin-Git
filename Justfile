@@ -1,9 +1,16 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
-host := `rustc -vV | sed -n 's/^host: //p'`
+# Justfile for Git plugin
 
 default:
   @just --list
 
-fix:
-  cargo fmt --all
-  cargo clippy --fix --all-targets --all-features --allow-dirty --allow-staged --target {{host}}
+install:
+  npm install
+
+lint:
+  npm run lint
+
+test:
+  npm test
+
+dist:
+  npm run dist

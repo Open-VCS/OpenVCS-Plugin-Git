@@ -1,0 +1,35 @@
+{
+  "name": "@openvcs/git-plugin",
+  "version": "0.1.0",
+  "description": "OpenVCS Git plugin - Node.js runtime",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "prepack": "npm run build",
+    "build:plugin": "tsc -p tsconfig.json",
+    "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build",
+    "dist": "node ./node_modules/@openvcs/sdk/bin/openvcs.js dist --plugin-dir . --out dist"
+  },
+  "devDependencies": {
+    "@openvcs/sdk": "^0.2",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {},
+  "files": [
+    "bin/",
+    "src/",
+    "openvcs.plugin.json",
+    "tsconfig.json",
+    "README.md",
+    "ARCHITECTURE.md",
+    "icon.png",
+    "LICENSE"
+  ]
+}
