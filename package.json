@@ -15,7 +15,7 @@
     "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build",
     "dist": "node ./node_modules/@openvcs/sdk/bin/openvcs.js dist --plugin-dir . --out dist"
   },
-   "dependencies": {
+  "dependencies": {
     "@openvcs/sdk": "^0.2"
   },
   "devDependencies": {
