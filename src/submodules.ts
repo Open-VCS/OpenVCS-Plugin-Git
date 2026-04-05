@@ -60,6 +60,7 @@ function buildSubmoduleRow(entry: SubmoduleEntry) {
 async function openSubmodulesModal(): Promise<unknown> {
   const git = createGitCommand();
   const entries = git.listSubmodules();
+  console.log('Git submodules: building modal', { count: entries.length });
 
   const modal = new ModalBuilder('Manage Submodules')
     .text('Review, add, update, sync, and remove submodules without leaving Git.')
@@ -104,6 +105,7 @@ async function openSubmodulesModal(): Promise<unknown> {
 async function openRemoveConfirmationModal(path: string, name?: string): Promise<unknown> {
   const submodulePath = String(path || '').trim();
   if (!submodulePath) return;
+  console.log('Git submodules: building remove confirmation', { path: submodulePath, name });
 
   const modal = new ModalBuilder('Confirm Submodule Removal')
     .text(`Remove the submodule at ${submodulePath}? This will deinitialize the submodule, remove it from the index, and delete its working tree entry.`)
@@ -182,6 +184,7 @@ export function registerSubmoduleToolkit(): void {
   repoMenu?.addItem({ label: 'Submodules', action: 'repo-submodules' });
 
   registerAction('repo-submodules', async () => {
+    console.log('Git submodules: repo-submodules action invoked');
     return openSubmodulesModal();
   });
 
