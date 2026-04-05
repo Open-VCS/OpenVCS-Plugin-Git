@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { spawnSync } from 'node:child_process';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { pluginError } from '@openvcs/sdk/runtime';
 import type {
@@ -70,6 +72,15 @@ export interface StashEntry {
   selector: string;
   msg: string;
   meta: string;
+}
+
+export interface SubmoduleEntry {
+  path: string;
+  name: string;
+  url?: string;
+  branch?: string;
+  commit?: string;
+  state: 'clean' | 'dirty' | 'uninitialized' | 'conflicted';
 }
 
 export class GitCommand {
@@ -330,6 +341,113 @@ export class GitCommand {
     const result = this.run(args);
     const commits = parseCommits(result.stdout);
     return { commits, exitCode: result.status };
+  }
+
+  listSubmodules(): SubmoduleEntry[] {
+    const configResult = this.run(['config', '-f', '.gitmodules', '--null', '--list']);
+    const configByName = new Map<string, { name: string; path?: string; url?: string; branch?: string }>();
+
+    if (configResult.status === 0) {
+      for (const entry of configResult.stdout.split('\0')) {
+        const trimmed = entry.trim();
+        if (!trimmed) continue;
+
+        const splitAt = trimmed.indexOf('\n');
+        if (splitAt < 0) continue;
+
+        const key = trimmed.slice(0, splitAt).trim();
+        const value = trimmed.slice(splitAt + 1);
+        const match = key.match(/^submodule\.(.+)\.(path|url|branch)$/);
+        if (!match) continue;
+
+        const [, name, field] = match;
+        const target = configByName.get(name) || { name };
+
+        if (field === 'path') target.path = value;
+        if (field === 'url') target.url = value;
+        if (field === 'branch') target.branch = value;
+
+        configByName.set(name, target);
+      }
+    }
+
+    const configByPath = new Map<string, { name: string; url?: string; branch?: string }>();
+    for (const entry of configByName.values()) {
+      if (entry.path) {
+        configByPath.set(entry.path, entry);
+      }
+    }
+
+    const statusResult = this.run(['submodule', 'status', '--recursive']);
+    if (statusResult.status !== 0) {
+      return [];
+    }
+
+    const stateFor = (marker: string): SubmoduleEntry['state'] => {
+      if (marker === '-') return 'uninitialized';
+      if (marker === '+') return 'dirty';
+      if (marker === 'U') return 'conflicted';
+      return 'clean';
+    };
+
+    const entries: SubmoduleEntry[] = [];
+    for (const rawLine of statusResult.stdout.split(/\r?\n/g)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      const marker = line[0] || ' ';
+      const rest = line.slice(1).trim();
+      const [commit = '', path = ''] = rest.split(/\s+/);
+      if (!path) continue;
+
+      const config = configByPath.get(path);
+      entries.push({
+        path,
+        name: config?.name || path.split('/').filter(Boolean).at(-1) || path,
+        url: config?.url,
+        branch: config?.branch,
+        commit,
+        state: stateFor(marker),
+      });
+    }
+
+    return entries.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  addSubmodule(url: string, path: string, name?: string, branch?: string): GitCommandResult {
+    const args = ['submodule', 'add'];
+    if (name) args.push('--name', name);
+    if (branch) args.push('--branch', branch);
+    args.push(url, path);
+    return this.runChecked(args, 'git-submodule-add-failed');
+  }
+
+  updateSubmodule(path: string): GitCommandResult {
+    return this.runChecked(['submodule', 'update', '--init', '--recursive', '--', path], 'git-submodule-update-failed');
+  }
+
+  updateAllSubmodules(): GitCommandResult {
+    return this.runChecked(['submodule', 'update', '--init', '--recursive'], 'git-submodule-update-failed');
+  }
+
+  syncSubmodule(path: string): GitCommandResult {
+    return this.runChecked(['submodule', 'sync', '--recursive', '--', path], 'git-submodule-sync-failed');
+  }
+
+  syncAllSubmodules(): GitCommandResult {
+    return this.runChecked(['submodule', 'sync', '--recursive'], 'git-submodule-sync-failed');
+  }
+
+  removeSubmodule(path: string): void {
+    this.runChecked(['submodule', 'deinit', '-f', '--', path], 'git-submodule-remove-failed');
+    this.runChecked(['rm', '-f', '--', path], 'git-submodule-remove-failed');
+
+    const modulesPath = join(this.cwd, '.git', 'modules', path);
+    try {
+      rmSync(modulesPath, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup.
+    }
   }
 
   diffFile(path: string): string {

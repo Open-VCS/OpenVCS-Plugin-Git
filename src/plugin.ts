@@ -15,6 +15,8 @@ import {
   requireSession,
 } from './plugin-runtime.js';
 
+import { registerSubmoduleToolkit } from './submodules.js';
+
 import { GitCommand } from './git.js';
 
 /** Creates a GitCommand instance for a given repository path. */
@@ -61,6 +63,8 @@ export function OnPluginStart(): void {
     repoMenu.addItem({ label: 'Edit .gitignore', action: 'repo-edit-gitignore' });
     repoMenu.addItem({ label: 'Edit .gitattributes', action: 'repo-edit-gitattributes' });
   }
+
+  registerSubmoduleToolkit();
 
   registerAction('repo-edit-gitignore', async () => {
     await invoke('open_repo_dotfile', { name: '.gitignore' });
