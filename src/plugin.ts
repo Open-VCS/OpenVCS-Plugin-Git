@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import type { PluginModuleDefinition } from '@openvcs/sdk/runtime';
-import { getOrCreateMenu, registerAction, invoke } from '@openvcs/sdk/runtime';
 
 import {
   GitVcsDelegates,
@@ -32,6 +31,18 @@ function createGitRuntimeDependencies(): GitRuntimeDependencies {
   };
 }
 
+/** Builds the repository menu contributed by the Git plugin. */
+function createRepositoryMenu() {
+  return {
+    id: 'repository',
+    label: 'Repository',
+    elements: [
+      { type: 'button', id: 'repo-edit-gitignore', label: 'Edit .gitignore' },
+      { type: 'button', id: 'repo-edit-gitattributes', label: 'Edit .gitattributes' },
+    ],
+  };
+}
+
 /** Registers the Git plugin with the OpenVCS SDK runtime.
  * 
  * Provides Git runtime options up front and defers `vcs.*` delegate registration
@@ -56,16 +67,9 @@ export function OnPluginStart(): void {
   const delegates = new GitVcsDelegates(createGitRuntimeDependencies());
   PluginDefinition.vcs = delegates.toDelegates();
 
-  const repoMenu = getOrCreateMenu('repository', 'Repository');
-  if (repoMenu) {
-    repoMenu.addItem({ label: 'Edit .gitignore', action: 'repo-edit-gitignore' });
-    repoMenu.addItem({ label: 'Edit .gitattributes', action: 'repo-edit-gitattributes' });
-  }
-
-  registerAction('repo-edit-gitignore', async () => {
-    await invoke('open_repo_dotfile', { name: '.gitignore' });
-  });
-  registerAction('repo-edit-gitattributes', async () => {
-    await invoke('open_repo_dotfile', { name: '.gitattributes' });
-  });
+  PluginDefinition.plugin = {
+    async 'plugin.get_menus'() {
+      return [createRepositoryMenu()];
+    },
+  };
 }
