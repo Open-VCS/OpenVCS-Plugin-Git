@@ -57,7 +57,7 @@ function buildSubmoduleRow(entry: SubmoduleEntry) {
 }
 
 /** Builds and opens the submodule manager modal. */
-async function openSubmodulesModal(): Promise<void> {
+async function openSubmodulesModal(): Promise<unknown> {
   const git = createGitCommand();
   const entries = git.listSubmodules();
 
@@ -97,11 +97,11 @@ async function openSubmodulesModal(): Promise<void> {
       items: entries.map((entry) => buildSubmoduleRow(entry)),
     });
 
-  await modal.open();
+  return modal.open();
 }
 
 /** Builds and opens the remove confirmation modal for one submodule. */
-async function openRemoveConfirmationModal(path: string, name?: string): Promise<void> {
+async function openRemoveConfirmationModal(path: string, name?: string): Promise<unknown> {
   const submodulePath = String(path || '').trim();
   if (!submodulePath) return;
 
@@ -116,7 +116,7 @@ async function openRemoveConfirmationModal(path: string, name?: string): Promise
       payload: { path: submodulePath, name: String(name || '').trim() || undefined },
     });
 
-  await modal.open();
+  return modal.open();
 }
 
 /** Removes one submodule and refreshes the toolkit modal. */
@@ -182,35 +182,35 @@ export function registerSubmoduleToolkit(): void {
   repoMenu?.addItem({ label: 'Submodules', action: 'repo-submodules' });
 
   registerAction('repo-submodules', async () => {
-    await openSubmodulesModal();
+    return openSubmodulesModal();
   });
 
   registerAction('submodules-add', async (payload?: unknown) => {
-    await addSubmodule(asPayload(payload));
+    return addSubmodule(asPayload(payload));
   });
 
   registerAction('submodules-update-all', async () => {
-    await updateAllSubmodules();
+    return updateAllSubmodules();
   });
 
   registerAction('submodules-sync-all', async () => {
-    await syncAllSubmodules();
+    return syncAllSubmodules();
   });
 
   registerAction('submodules-update', async (payload?: unknown) => {
-    await updateSubmodule(asPayload(payload));
+    return updateSubmodule(asPayload(payload));
   });
 
   registerAction('submodules-sync', async (payload?: unknown) => {
-    await syncSubmodule(asPayload(payload));
+    return syncSubmodule(asPayload(payload));
   });
 
   registerAction('submodules-remove-request', async (payload?: unknown) => {
     const data = asPayload(payload);
-    await openRemoveConfirmationModal(payloadString(data, 'path'), payloadString(data, 'name'));
+    return openRemoveConfirmationModal(payloadString(data, 'path'), payloadString(data, 'name'));
   });
 
   registerAction('submodules-remove-confirm', async (payload?: unknown) => {
-    await removeSubmodule(asPayload(payload));
+    return removeSubmodule(asPayload(payload));
   });
 }
