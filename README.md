@@ -6,6 +6,7 @@ This directory contains the System Git VCS backend plugin used by OpenVCS.
 
 - The plugin runs as a long-lived Node.js process.
 - The plugin implements the JSON-RPC contract used by the backend runtime (`plugin.*` and `vcs.*`) through the shared SDK runtime delegates.
+- The plugin can add top-level app menus and items through `@openvcs/sdk/runtime` helpers.
 - Git operations are executed through the local `git` CLI.
 - The runtime uses a trust model (no per-capability permission prompts).
 
@@ -14,6 +15,8 @@ This directory contains the System Git VCS backend plugin used by OpenVCS.
 ```bash
 npm install
 ```
+
+- The SDK dependency is pinned to the `^0.2` range so it tracks the latest `0.2.x` releases.
 
 ## Validate
 
