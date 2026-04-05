@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "OpenVCS Git plugin - Node.js runtime",
   "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Open-VCS/OpenVCS-Plugin-Git",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Open-VCS/OpenVCS-Plugin-Git"
+  },
+  "bugs": {
+    "url": "https://github.com/Open-VCS/OpenVCS-Plugin-Git/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=18"
