@@ -38,7 +38,7 @@ The plugin stores lightweight runtime state:
 
 ## Manifest
 
-`openvcs.plugin.json` declares:
+`package.json.openvcs` declares:
 
 - `module.exec`: `openvcs-git-plugin.js`
 - `module.vcs_backends`: `git`
@@ -46,11 +46,11 @@ The plugin stores lightweight runtime state:
 
 ## Packaging
 
-The SDK packages this plugin into an `.ovcsp` bundle with:
+This plugin is published and consumed as an npm package with these runtime files:
 
 ```text
 openvcs.git/
-  openvcs.plugin.json
+  package.json
   bin/openvcs-git-plugin.js  (SDK-generated bootstrap, entry point)
   bin/plugin.js              (authored module with PluginDefinition + OnPluginStart)
   bin/plugin-helpers.js

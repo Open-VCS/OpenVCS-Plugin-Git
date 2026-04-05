@@ -7,16 +7,29 @@
   "engines": {
     "node": ">=18"
   },
+  "openvcs": {
+    "id": "openvcs.git",
+    "name": "Git",
+    "version": "0.1.0",
+    "author": "OpenVCS Contributors",
+    "description": "Git VCS backend plugin for OpenVCS",
+    "default_enabled": true,
+    "module": {
+      "exec": "openvcs-git-plugin.js",
+      "vcs_backends": [
+        "git"
+      ]
+    }
+  },
   "scripts": {
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
     "prepack": "npm run build",
     "build:plugin": "tsc -p tsconfig.json",
-    "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build",
-    "dist": "node ./node_modules/@openvcs/sdk/bin/openvcs.js dist --plugin-dir . --out dist"
+    "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build"
   },
   "dependencies": {
-    "@openvcs/sdk": "^0.2.15"
+    "@openvcs/sdk": "^0.2.16"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
@@ -26,7 +39,6 @@
   "files": [
     "bin/",
     "src/",
-    "openvcs.plugin.json",
     "tsconfig.json",
     "README.md",
     "ARCHITECTURE.md",

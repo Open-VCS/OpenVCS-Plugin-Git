@@ -63,8 +63,8 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Package plugin (.ovcsp)
-        run: npm run dist
+      - name: Pack plugin
+        run: npm pack --pack-destination dist
 
       - name: Verify package
-        run: test -f dist/openvcs.git.ovcsp
+        run: test -n "$(ls dist/*.tgz)"

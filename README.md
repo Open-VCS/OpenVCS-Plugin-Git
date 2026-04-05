@@ -41,10 +41,11 @@ npm run build
 npm test
 ```
 
-## Package
+## Pack For Config Use
 
 ```bash
-npm run dist
+npm pack
 ```
 
-- `npm run dist` runs `openvcs dist`, which builds plugin assets before packaging unless `--no-build` is passed.
+- `npm pack` uses the package `files` list and `prepack` hook.
+- OpenVCS resolves published packages and local path plugins through npm package semantics.
