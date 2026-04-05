@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import type { PluginModuleDefinition } from '@openvcs/sdk/runtime';
+import { getOrCreateMenu, registerAction, invoke } from '@openvcs/sdk/runtime';
 
 import {
   GitVcsDelegates,
@@ -55,17 +56,16 @@ export function OnPluginStart(): void {
   const delegates = new GitVcsDelegates(createGitRuntimeDependencies());
   PluginDefinition.vcs = delegates.toDelegates();
 
-  if (typeof globalThis.OpenVCS !== 'undefined') {
-    const repoMenu = globalThis.OpenVCS.menus?.getOrCreate?.('repository', 'Repository');
-    if (repoMenu) {
-      repoMenu.addItem?.({ label: 'Edit .gitignore', action: 'repo-edit-gitignore' });
-      repoMenu.addItem?.({ label: 'Edit .gitattributes', action: 'repo-edit-gitattributes' });
-    }
-    globalThis.OpenVCS.registerAction?.('repo-edit-gitignore', async () => {
-      await globalThis.OpenVCS.invoke('open_repo_dotfile', { name: '.gitignore' });
-    });
-    globalThis.OpenVCS.registerAction?.('repo-edit-gitattributes', async () => {
-      await globalThis.OpenVCS.invoke('open_repo_dotfile', { name: '.gitattributes' });
-    });
+  const repoMenu = getOrCreateMenu('repository', 'Repository');
+  if (repoMenu) {
+    repoMenu.addItem({ label: 'Edit .gitignore', action: 'repo-edit-gitignore' });
+    repoMenu.addItem({ label: 'Edit .gitattributes', action: 'repo-edit-gitattributes' });
   }
+
+  registerAction('repo-edit-gitignore', async () => {
+    await invoke('open_repo_dotfile', { name: '.gitignore' });
+  });
+  registerAction('repo-edit-gitattributes', async () => {
+    await invoke('open_repo_dotfile', { name: '.gitattributes' });
+  });
 }
