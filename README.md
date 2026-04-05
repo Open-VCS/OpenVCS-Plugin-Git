@@ -49,3 +49,18 @@ npm pack
 
 - `npm pack` uses the package `files` list and `prepack` hook.
 - OpenVCS resolves published packages and local path plugins through npm package semantics.
+
+## Release Channels
+
+The npm package can be consumed from prerelease channels published by CI:
+
+- `latest`: stable releases
+- `beta`: builds from the `Beta` branch
+- `nightly`: scheduled builds from `Dev` when there are changes since the last nightly
+
+Examples:
+
+```bash
+npm install @openvcs/git-plugin@beta
+npm install @openvcs/git-plugin@nightly
+```

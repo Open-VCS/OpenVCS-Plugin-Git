@@ -1,0 +1,59 @@
+name: publish-beta
+run-name: "OpenVCS-Plugin-Git • Beta Release • Run #${{ github.run_number }}"
+
+on:
+  push:
+    branches: [Beta]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-beta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-npm:
+    name: Publish @openvcs/git-plugin beta to npm
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Compute beta version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_VERSION="$(node -p "require('./package.json').version.split('-')[0]")"
+          VERSION="${BASE_VERSION}-beta.${GITHUB_RUN_NUMBER}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply beta version
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node -e "const fs=require('fs'); const path='package.json'; const pkg=JSON.parse(fs.readFileSync(path,'utf8')); pkg.version=process.env.RELEASE_VERSION; if (pkg.openvcs && typeof pkg.openvcs === 'object') pkg.openvcs.version=process.env.RELEASE_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+'\n');"
+
+      - name: Verify npm package contents
+        run: npm pack --dry-run
+
+      - name: Publish npm package
+        run: npm publish --provenance --access public --tag beta

@@ -56,11 +56,11 @@ jobs:
           SINCE_SHA="$(git rev-list -n 1 "$TAG")"
           echo "since_sha=$SINCE_SHA" >> "$GITHUB_OUTPUT"
 
-          if git diff --quiet "$TAG"..HEAD -- src openvcs.plugin.json README.md ARCHITECTURE.md icon.png LICENSE package.json package-lock.json tsconfig.json test/; then
+          if git diff --quiet "$TAG"..HEAD -- src README.md ARCHITECTURE.md icon.png LICENSE package.json package-lock.json tsconfig.json test/ .github/workflows; then
             echo "changed=false"      >> "$GITHUB_OUTPUT"
             echo "ahead_count=0"      >> "$GITHUB_OUTPUT"
           else
-            AHEAD="$(git rev-list --count "$TAG"..HEAD -- src openvcs.plugin.json README.md ARCHITECTURE.md icon.png LICENSE package.json package-lock.json tsconfig.json test/ || echo 1)"
+            AHEAD="$(git rev-list --count "$TAG"..HEAD -- src README.md ARCHITECTURE.md icon.png LICENSE package.json package-lock.json tsconfig.json test/ .github/workflows || echo 1)"
             echo "changed=true"       >> "$GITHUB_OUTPUT"
             echo "ahead_count=$AHEAD" >> "$GITHUB_OUTPUT"
           fi
@@ -97,6 +97,74 @@ jobs:
         with:
           name: openvcs-git-nightly-ubuntu
           path: dist/*.tgz
+
+  publish-npm:
+    name: Publish @openvcs/git-plugin nightly to npm
+    needs: check-changes
+    if: needs.check-changes.outputs.changed == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.force == true || github.event.inputs.force == 'true'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.TARGET_REF }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Compute nightly version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_VERSION="$(node -p "require('./package.json').version.split('-')[0]")"
+          DATE="$(date -u +%Y%m%d)"
+          TARGET_SHA="$(git rev-parse HEAD)"
+          VERSION="${BASE_VERSION}-nightly.${DATE}.${GITHUB_RUN_NUMBER}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "target_sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply nightly version
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node -e "const fs=require('fs'); const path='package.json'; const pkg=JSON.parse(fs.readFileSync(path,'utf8')); pkg.version=process.env.RELEASE_VERSION; if (pkg.openvcs && typeof pkg.openvcs === 'object') pkg.openvcs.version=process.env.RELEASE_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+'\n');"
+
+      - name: Verify npm package contents
+        run: npm pack --dry-run
+
+      - name: Publish npm package
+        run: npm publish --provenance --access public --tag nightly
+
+      - name: Update rolling nightly tag
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          TARGET_SHA: ${{ steps.version.outputs.target_sha }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = 'openvcs-git-nightly';
+            try {
+              await github.rest.git.deleteRef({ owner, repo, ref: `tags/${tag}` });
+            } catch (e) {
+              if (e.status !== 422) throw e;
+            }
+            await github.rest.git.createRef({ owner, repo, ref: `refs/tags/${tag}`, sha: process.env.TARGET_SHA || context.sha });
 
   release:
     name: Publish rolling nightly prerelease

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (default: openvcs-git-v<manifest version>)"
+        description: "Release tag (default: openvcs-git-v<package version>)"
         required: false
         type: string
       prerelease:
@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -77,14 +78,7 @@ jobs:
             echo "tag=${INPUT_TAG}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          TAG="$(python - <<'PY'
-          import json
-          with open("openvcs.plugin.json", "r") as f:
-              data = json.load(f)
-          ver = data["version"]
-          print(f"openvcs-git-v{ver}")
-          PY
-          )"
+          TAG="$(node -p "'openvcs-git-v' + require('./package.json').version")"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Download artifact
@@ -102,3 +96,31 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/*
+
+  publish-npm:
+    name: Publish @openvcs/git-plugin to npm
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Verify npm package contents
+        run: npm pack --dry-run
+
+      - name: Publish npm package
+        run: npm publish --provenance --access public
