@@ -14,6 +14,7 @@ import {
   asString,
   asStringArray,
   asTrimmedString,
+  buildCloneArgs,
 } from './plugin-helpers.js';
 import { GitCommand } from './git.js';
 import type { GitSession } from './plugin-types.js';
@@ -92,7 +93,7 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     }
 
     const git = this.deps.createGitCommand(process.cwd());
-    const output = git.runChecked(['clone', url, destination], 'vcs-clone-failed');
+    const output = git.runChecked(buildCloneArgs({ url, dest: destination }), 'vcs-clone-failed');
     const lines = `${output.stdout}\n${output.stderr}`
       .split(/\r?\n/g)
       .map((line) => line.trim())

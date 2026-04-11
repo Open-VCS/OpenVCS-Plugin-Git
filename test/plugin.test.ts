@@ -5,9 +5,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  applySubmoduleStatusHints,
+  buildCloneArgs,
   buildFetchArgs,
   buildPullFfOnlyArgs,
   buildPushArgs,
+  buildSubmoduleUpdateArgs,
   parseStatusOutput,
 } from '../src/plugin-helpers.js';
 
@@ -81,6 +84,15 @@ describe('Git plugin helpers', () => {
       );
     });
 
+    it('builds clone with recursive submodules enabled', () => {
+      assert.deepStrictEqual(buildCloneArgs({ url: 'https://example.com/repo.git', dest: 'repo' }), [
+        'clone',
+        '--recurse-submodules',
+        'https://example.com/repo.git',
+        'repo',
+      ]);
+    });
+
     it('builds push with no optional arguments', () => {
       assert.deepStrictEqual(buildPushArgs({}), ['push']);
     });
@@ -94,6 +106,43 @@ describe('Git plugin helpers', () => {
         buildPullFfOnlyArgs({ remote: 'origin', branch: 'main' }),
         ['pull', '--ff-only', 'origin', 'main'],
       );
+    });
+
+    it('builds submodule update for one path', () => {
+      assert.deepStrictEqual(buildSubmoduleUpdateArgs({ path: 'libs/example' }), [
+        'submodule',
+        'update',
+        '--init',
+        '--recursive',
+        '--',
+        'libs/example',
+      ]);
+    });
+
+    it('builds submodule remote update recursively', () => {
+      assert.deepStrictEqual(buildSubmoduleUpdateArgs({ remote: true }), [
+        'submodule',
+        'update',
+        '--init',
+        '--recursive',
+        '--remote',
+      ]);
+    });
+  });
+
+  describe('submodule status hints', () => {
+    it('marks known submodule paths distinctly in status payloads', () => {
+      const parsed = parseStatusOutput('## main\0 M deps/example\0');
+      const hinted = applySubmoduleStatusHints(parsed, ['deps/example']);
+
+      assert.deepStrictEqual(hinted.payload.files[0], {
+        path: 'deps/example',
+        old_path: null,
+        status: 'S',
+        staged: false,
+        resolved_conflict: false,
+        hunks: [],
+      });
     });
   });
 });

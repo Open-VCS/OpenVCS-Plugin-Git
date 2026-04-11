@@ -14,10 +14,12 @@ import type {
 } from '@openvcs/sdk/types';
 import type { GitCommandResult, RunGitOptions } from './plugin-types.js';
 import {
+  applySubmoduleStatusHints,
   asString,
   buildFetchArgs,
   buildPullFfOnlyArgs,
   buildPushArgs,
+  buildSubmoduleUpdateArgs,
   parseCommits,
   parseStatusOutput,
 } from './plugin-helpers.js';
@@ -148,7 +150,7 @@ export class GitCommand {
 
   status(): StatusParseResult & { exitCode: number } {
     const result = this.run(['status', '--porcelain=1', '--branch', '-z', '-uall']);
-    const parsed = parseStatusOutput(result.stdout);
+    const parsed = applySubmoduleStatusHints(parseStatusOutput(result.stdout), this.listSubmodulePaths());
     return { ...parsed, exitCode: result.status };
   }
 
@@ -343,9 +345,13 @@ export class GitCommand {
     return { commits, exitCode: result.status };
   }
 
-  listSubmodules(): SubmoduleEntry[] {
+  /** Reads `.gitmodules` entries indexed by submodule name and path. */
+  private readSubmoduleConfig(): {
+    byName: Map<string, { name: string; path?: string; url?: string; branch?: string }>;
+    byPath: Map<string, { name: string; url?: string; branch?: string }>;
+  } {
     const configResult = this.run(['config', '-f', '.gitmodules', '--null', '--list']);
-    const configByName = new Map<string, { name: string; path?: string; url?: string; branch?: string }>();
+    const byName = new Map<string, { name: string; path?: string; url?: string; branch?: string }>();
 
     if (configResult.status === 0) {
       for (const entry of configResult.stdout.split('\0')) {
@@ -361,22 +367,33 @@ export class GitCommand {
         if (!match) continue;
 
         const [, name, field] = match;
-        const target = configByName.get(name) || { name };
+        const target = byName.get(name) || { name };
 
         if (field === 'path') target.path = value;
         if (field === 'url') target.url = value;
         if (field === 'branch') target.branch = value;
 
-        configByName.set(name, target);
+        byName.set(name, target);
       }
     }
 
-    const configByPath = new Map<string, { name: string; url?: string; branch?: string }>();
-    for (const entry of configByName.values()) {
+    const byPath = new Map<string, { name: string; url?: string; branch?: string }>();
+    for (const entry of byName.values()) {
       if (entry.path) {
-        configByPath.set(entry.path, entry);
+        byPath.set(entry.path, entry);
       }
     }
+
+    return { byName, byPath };
+  }
+
+  /** Returns known submodule paths from `.gitmodules`. */
+  private listSubmodulePaths(): Set<string> {
+    return new Set(this.readSubmoduleConfig().byPath.keys());
+  }
+
+  listSubmodules(): SubmoduleEntry[] {
+    const { byPath: configByPath } = this.readSubmoduleConfig();
 
     const statusResult = this.run(['submodule', 'status', '--recursive']);
     if (statusResult.status !== 0) {
@@ -423,11 +440,21 @@ export class GitCommand {
   }
 
   updateSubmodule(path: string): GitCommandResult {
-    return this.runChecked(['submodule', 'update', '--init', '--recursive', '--', path], 'git-submodule-update-failed');
+    return this.runChecked(buildSubmoduleUpdateArgs({ path }), 'git-submodule-update-failed');
   }
 
   updateAllSubmodules(): GitCommandResult {
-    return this.runChecked(['submodule', 'update', '--init', '--recursive'], 'git-submodule-update-failed');
+    return this.runChecked(buildSubmoduleUpdateArgs({}), 'git-submodule-update-failed');
+  }
+
+  /** Updates one submodule from its configured branch recursively. */
+  updateSubmoduleRemote(path: string): GitCommandResult {
+    return this.runChecked(buildSubmoduleUpdateArgs({ path, remote: true }), 'git-submodule-update-remote-failed');
+  }
+
+  /** Updates all submodules from their configured branches recursively. */
+  updateAllSubmodulesRemote(): GitCommandResult {
+    return this.runChecked(buildSubmoduleUpdateArgs({ remote: true }), 'git-submodule-update-remote-failed');
   }
 
   syncSubmodule(path: string): GitCommandResult {

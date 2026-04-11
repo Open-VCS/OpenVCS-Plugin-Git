@@ -44,6 +44,12 @@ function buildSubmoduleRow(entry: SubmoduleEntry) {
     description,
     actions: [
       { type: 'button' as const, id: 'submodules-update', content: 'Update', payload: { path: entry.path } },
+      {
+        type: 'button' as const,
+        id: 'submodules-update-remote',
+        content: 'Update Remote',
+        payload: { path: entry.path },
+      },
       { type: 'button' as const, id: 'submodules-sync', content: 'Sync', payload: { path: entry.path } },
       {
         type: 'button' as const,
@@ -64,6 +70,7 @@ async function openSubmodulesModal(): Promise<unknown> {
 
   const modal = new ModalBuilder('Manage Submodules')
     .text('Review, add, update, sync, and remove submodules without leaving Git.')
+    .text('Use Update Remote to follow each submodule branch configured in .gitmodules.')
     .separator()
     .input('url', 'Submodule URL', {
       kind: 'url',
@@ -86,6 +93,9 @@ async function openSubmodulesModal(): Promise<unknown> {
       align: 'centered',
     })
     .button('submodules-update-all', 'Update All (Recursive)', {
+      align: 'centered',
+    })
+    .button('submodules-update-all-remote', 'Update All From Branches', {
       align: 'centered',
     })
     .button('submodules-sync-all', 'Sync All', {
@@ -155,6 +165,15 @@ async function updateSubmodule(payload: ModalActionPayload): Promise<void> {
   await openSubmodulesModal();
 }
 
+/** Updates one submodule from its configured branch and refreshes the toolkit modal. */
+async function updateSubmoduleRemote(payload: ModalActionPayload): Promise<void> {
+  const path = payloadString(payload, 'path');
+  if (!path) return;
+  const git = createGitCommand();
+  git.updateSubmoduleRemote(path);
+  await openSubmodulesModal();
+}
+
 /** Syncs one submodule and refreshes the toolkit modal. */
 async function syncSubmodule(payload: ModalActionPayload): Promise<void> {
   const path = payloadString(payload, 'path');
@@ -168,6 +187,13 @@ async function syncSubmodule(payload: ModalActionPayload): Promise<void> {
 async function updateAllSubmodules(): Promise<void> {
   const git = createGitCommand();
   git.updateAllSubmodules();
+  await openSubmodulesModal();
+}
+
+/** Updates all submodules from their configured branches and refreshes the toolkit modal. */
+async function updateAllSubmodulesRemote(): Promise<void> {
+  const git = createGitCommand();
+  git.updateAllSubmodulesRemote();
   await openSubmodulesModal();
 }
 
@@ -196,12 +222,20 @@ export function registerSubmoduleToolkit(): void {
     return updateAllSubmodules();
   });
 
+  registerAction('submodules-update-all-remote', async () => {
+    return updateAllSubmodulesRemote();
+  });
+
   registerAction('submodules-sync-all', async () => {
     return syncAllSubmodules();
   });
 
   registerAction('submodules-update', async (payload?: unknown) => {
     return updateSubmodule(asPayload(payload));
+  });
+
+  registerAction('submodules-update-remote', async (payload?: unknown) => {
+    return updateSubmoduleRemote(asPayload(payload));
   });
 
   registerAction('submodules-sync', async (payload?: unknown) => {
