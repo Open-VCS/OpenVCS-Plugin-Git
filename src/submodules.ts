@@ -72,35 +72,58 @@ async function openSubmodulesModal(): Promise<unknown> {
     .text('Review, add, update, sync, and remove submodules without leaving Git.')
     .text('Use Update Remote to follow each submodule branch configured in .gitmodules.')
     .separator()
-    .input('url', 'Submodule URL', {
-      kind: 'url',
-      placeholder: 'https://example.com/repo.git',
-    })
-    .input('path', 'Submodule Path', {
-      placeholder: 'libs/example',
-    })
-    .input('name', 'Submodule Name', {
-      placeholder: 'example',
-    })
-    .input('branch', 'Branch (optional)', {
-      placeholder: 'main',
-    })
-    .button('submodules-add', 'Add Submodule', {
-      variant: 'primary',
-      align: 'centered',
-    })
-    .button('repo-submodules', 'Refresh', {
-      align: 'centered',
-    })
-    .button('submodules-update-all', 'Update All (Recursive)', {
-      align: 'centered',
-    })
-    .button('submodules-update-all-remote', 'Update All From Branches', {
-      align: 'centered',
-    })
-    .button('submodules-sync-all', 'Sync All', {
-      align: 'centered',
-    })
+    .verticalBox(
+      [
+        {
+          type: 'input' as const,
+          id: 'url',
+          label: 'Submodule URL',
+          kind: 'url' as const,
+          placeholder: 'https://example.com/repo.git',
+        },
+        {
+          type: 'grid' as const,
+          columns: 'minmax(0, 1fr) minmax(0, 1fr)',
+          gap: '.75rem',
+          content: [
+            {
+              type: 'input' as const,
+              id: 'path',
+              label: 'Submodule Path',
+              placeholder: 'libs/example',
+            },
+            {
+              type: 'input' as const,
+              id: 'name',
+              label: 'Submodule Name',
+              placeholder: 'example',
+            },
+          ],
+        },
+        {
+          type: 'input' as const,
+          id: 'branch',
+          label: 'Branch (optional)',
+          placeholder: 'main',
+        },
+      ],
+      { gap: '1rem' },
+    )
+    .horizontalBox(
+      [
+        { type: 'button' as const, id: 'submodules-add', content: 'Add Submodule', variant: 'primary' as const },
+        { type: 'button' as const, id: 'repo-submodules', content: 'Refresh' },
+      ],
+      { gap: '.5rem', align: 'centered', wrap: true },
+    )
+    .horizontalBox(
+      [
+        { type: 'button' as const, id: 'submodules-update-all', content: 'Update All (Recursive)' },
+        { type: 'button' as const, id: 'submodules-update-all-remote', content: 'Update All From Branches' },
+        { type: 'button' as const, id: 'submodules-sync-all', content: 'Sync All' },
+      ],
+      { gap: '.5rem', align: 'centered', wrap: true },
+    )
     .separator()
     .list('submodules', {
       label: 'Submodules',
@@ -119,14 +142,19 @@ async function openRemoveConfirmationModal(path: string, name?: string): Promise
 
   const modal = new ModalBuilder('Confirm Submodule Removal')
     .text(`Remove the submodule at ${submodulePath}? This will deinitialize the submodule, remove it from the index, and delete its working tree entry.`)
-    .button('repo-submodules', 'Back', {
-      align: 'centered',
-    })
-    .button('submodules-remove-confirm', 'Remove Submodule', {
-      variant: 'danger',
-      align: 'centered',
-      payload: { path: submodulePath, name: String(name || '').trim() || undefined },
-    });
+    .horizontalBox(
+      [
+        { type: 'button' as const, id: 'repo-submodules', content: 'Back' },
+        {
+          type: 'button' as const,
+          id: 'submodules-remove-confirm',
+          content: 'Remove Submodule',
+          variant: 'danger' as const,
+          payload: { path: submodulePath, name: String(name || '').trim() || undefined },
+        },
+      ],
+      { gap: '.5rem', align: 'centered', wrap: true },
+    );
 
   return modal.open();
 }
