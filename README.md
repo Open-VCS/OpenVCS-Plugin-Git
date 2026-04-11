@@ -21,7 +21,7 @@ This directory contains the System Git VCS backend plugin used by OpenVCS.
 npm install
 ```
 
-- The SDK dependency is pinned to the `^0.2` range so it tracks the latest `0.2.x` releases.
+- The SDK dependency tracks the `edge` tag so it always follows the latest SDK commit.
 
 ## Validate
 
