@@ -186,7 +186,7 @@ jobs:
 
       - name: Update rolling nightly tag
         if: steps.meta.outputs.should_publish == 'true' && steps.meta.outputs.dist_tag == 'nightly'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TARGET_SHA: ${{ steps.meta.outputs.target_sha }}
         with:
@@ -236,7 +236,7 @@ jobs:
 
       - name: Remove existing nightly release & tag
         if: steps.tag.outputs.tag == 'openvcs-git-nightly'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const owner = context.repo.owner;
