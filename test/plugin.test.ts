@@ -15,6 +15,7 @@ import {
 } from '../src/plugin-helpers.js';
 
 import { PluginDefinition, OnPluginStart } from '../src/plugin.js';
+import { planDiscardPaths } from '../src/plugin-request-handler.js';
 
 describe('Git plugin helpers', () => {
   describe('parseStatusOutput', () => {
@@ -142,6 +143,58 @@ describe('Git plugin helpers', () => {
         staged: false,
         resolved_conflict: false,
         hunks: [],
+      });
+    });
+  });
+
+  describe('discard path planning', () => {
+    it('routes tracked files to restore and untracked files to clean', () => {
+      const plan = planDiscardPaths(' M tracked.txt\0?? scratch.txt\0');
+
+      assert.deepStrictEqual(plan, {
+        restore: ['tracked.txt'],
+        unstageThenRemove: [],
+        clean: ['scratch.txt'],
+      });
+    });
+
+    it('restores the old side of staged renames and removes the new side', () => {
+      const plan = planDiscardPaths('R  old-name.txt\0new-name.txt\0');
+
+      assert.deepStrictEqual(plan, {
+        restore: ['old-name.txt'],
+        unstageThenRemove: ['new-name.txt'],
+        clean: ['new-name.txt'],
+      });
+    });
+
+    it('cleans unstaged rename targets after restoring the original path', () => {
+      const plan = planDiscardPaths(' R old-name.txt\0new-name.txt\0');
+
+      assert.deepStrictEqual(plan, {
+        restore: ['old-name.txt'],
+        unstageThenRemove: [],
+        clean: ['new-name.txt'],
+      });
+    });
+
+    it('unstages and removes staged additions that do not exist in HEAD', () => {
+      const plan = planDiscardPaths('A  added.txt\0');
+
+      assert.deepStrictEqual(plan, {
+        restore: [],
+        unstageThenRemove: ['added.txt'],
+        clean: ['added.txt'],
+      });
+    });
+
+    it('unstages and removes staged copies that do not exist in HEAD', () => {
+      const plan = planDiscardPaths('C  original.txt\0copy.txt\0');
+
+      assert.deepStrictEqual(plan, {
+        restore: [],
+        unstageThenRemove: ['copy.txt'],
+        clean: ['copy.txt'],
       });
     });
   });

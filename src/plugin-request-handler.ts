@@ -15,9 +15,86 @@ import {
   asStringArray,
   asTrimmedString,
   buildCloneArgs,
+  parseStatusOutput,
 } from './plugin-helpers.js';
 import { GitCommand } from './git.js';
 import type { GitSession } from './plugin-types.js';
+
+/** Describes the Git operations needed to discard a set of paths safely. */
+export interface DiscardPathPlan {
+  /** Restores tracked paths from HEAD in both the index and worktree. */
+  restore: string[];
+  /** Removes newly added index entries before deleting their worktree files. */
+  unstageThenRemove: string[];
+  /** Deletes untracked worktree paths after index state has been corrected. */
+  clean: string[];
+}
+
+/** Reduces a file status string to the primary status code needed for discard routing. */
+function getPrimaryDiscardStatus(status: string): string {
+  const normalized = asTrimmedString(status);
+  if (!normalized) {
+    return 'M';
+  }
+
+  for (const candidate of ['?', 'R', 'C', 'A', 'D', 'U', 'T', 'S', 'M']) {
+    if (normalized.includes(candidate)) {
+      return candidate;
+    }
+  }
+
+  return normalized[0] ?? 'M';
+}
+
+/** Builds a discard plan that handles tracked, added, copied, and renamed paths. */
+export function planDiscardPaths(statusOutput: string): DiscardPathPlan {
+  const restore = new Set<string>();
+  const unstageThenRemove = new Set<string>();
+  const clean = new Set<string>();
+  const parsed = parseStatusOutput(statusOutput);
+
+  for (const file of parsed.payload.files) {
+    const path = asTrimmedString(file.path);
+    const oldPath = asTrimmedString(file.old_path);
+    const primaryStatus = getPrimaryDiscardStatus(file.status);
+
+    if (!path) {
+      continue;
+    }
+
+    if (primaryStatus === '?') {
+      clean.add(path);
+      continue;
+    }
+
+    if (primaryStatus === 'R') {
+      if (oldPath) {
+        restore.add(oldPath);
+      }
+      if (file.staged) {
+        unstageThenRemove.add(path);
+      }
+      clean.add(path);
+      continue;
+    }
+
+    if (primaryStatus === 'C' || primaryStatus === 'A') {
+      if (file.staged) {
+        unstageThenRemove.add(path);
+      }
+      clean.add(path);
+      continue;
+    }
+
+    restore.add(path);
+  }
+
+  return {
+    restore: Array.from(restore),
+    unstageThenRemove: Array.from(unstageThenRemove),
+    clean: Array.from(clean),
+  };
+}
 
 /** Describes the Git runtime services consumed by the VCS delegates. */
 export interface GitRuntimeDependencies {
@@ -396,7 +473,29 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
       return null;
     }
 
-    git.runChecked(['checkout', '--', ...paths], 'git-discard-paths-failed');
+    const status = git.runChecked(
+      ['status', '--porcelain=1', '-z', '-uall', '--', ...paths],
+      'git-discard-paths-failed',
+    );
+    const discardPlan = planDiscardPaths(status.stdout);
+
+    if (discardPlan.unstageThenRemove.length > 0) {
+      git.runChecked(
+        ['rm', '-f', '--cached', '--', ...discardPlan.unstageThenRemove],
+        'git-discard-paths-failed',
+      );
+    }
+
+    if (discardPlan.restore.length > 0) {
+      git.runChecked(
+        ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...discardPlan.restore],
+        'git-discard-paths-failed',
+      );
+    }
+
+    if (discardPlan.clean.length > 0) {
+      git.runChecked(['clean', '-f', '--', ...discardPlan.clean], 'git-discard-paths-failed');
+    }
     return null;
   }
 
