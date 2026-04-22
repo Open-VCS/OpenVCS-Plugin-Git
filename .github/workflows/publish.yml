@@ -1,15 +1,15 @@
 name: publish
-run-name: "OpenVCS-Plugin-Git • Publish • Run #${{ github.run_number }} • ${{ github.event_name == 'schedule' && 'Nightly@Dev' || github.ref_name }}"
+run-name: "OpenVCS-Plugin-Git • Publish • Run #${{ github.run_number }} • ${{ github.event_name == 'schedule' && 'Nightly@Dev' || github.ref_name == 'Dev' && 'Edge@Dev' || github.ref_name }}"
 
 on:
   push:
-    branches: [Stable, Beta]
+    branches: [Stable, Beta, Dev]
   schedule:
     - cron: '35 1 * * *'
   workflow_dispatch:
     inputs:
       force:
-        description: Publish nightly even if no changes since last nightly tag
+        description: Publish prerelease even if no changes since the last rolling tag
         type: boolean
         required: false
         default: false
@@ -31,8 +31,8 @@ env:
   TARGET_REF: ${{ github.event_name == 'schedule' && 'Dev' || github.ref_name }}
 
 jobs:
-  check-nightly:
-    name: Check for Git nightly changes
+  check-prerelease:
+    name: Check for Git prerelease changes
     runs-on: ubuntu-24.04
     outputs:
       changed: ${{ steps.diff.outputs.changed }}
@@ -48,18 +48,22 @@ jobs:
       - name: Fetch tags
         run: git fetch --tags --force
 
-      - name: Determine diff vs openvcs-git-nightly
+      - name: Determine diff vs rolling prerelease tag
         id: diff
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+          if [ "${GITHUB_REF_NAME}" = "Stable" ] || [ "${GITHUB_REF_NAME}" = "Beta" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "since_sha=(push)" >> "$GITHUB_OUTPUT"
+            echo "since_sha=(release)" >> "$GITHUB_OUTPUT"
             echo "ahead_count=1" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          TAG="openvcs-git-nightly"
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            TAG="openvcs-git-nightly"
+          else
+            TAG="openvcs-git-edge"
+          fi
           if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "since_sha=(none)" >> "$GITHUB_OUTPUT"
@@ -79,8 +83,8 @@ jobs:
 
   build-artifact:
     name: Build package artifact
-    if: github.ref_name == 'Stable' || ((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && (needs.check-nightly.outputs.changed == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.force == true || github.event.inputs.force == 'true'))))
-    needs: [check-nightly]
+    if: github.ref_name == 'Stable' || (github.event_name == 'schedule' && (needs.check-prerelease.outputs.changed == 'true' || (inputs.force == true || github.event.inputs.force == 'true')))
+    needs: [check-prerelease]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout target ref
@@ -112,7 +116,8 @@ jobs:
 
   publish-npm:
     name: Publish @openvcs/git-plugin to npm
-    needs: [check-nightly]
+    if: github.ref_name == 'Stable' || github.ref_name == 'Beta' || github.ref_name == 'Dev' || github.event_name == 'schedule'
+    needs: [check-prerelease]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout target ref
@@ -138,7 +143,7 @@ jobs:
         id: meta
         shell: bash
         env:
-          FORCE_NIGHTLY: ${{ github.event_name == 'workflow_dispatch' && (inputs.force || false) }}
+          FORCE_ROLLING: ${{ github.event_name == 'workflow_dispatch' && (inputs.force || false) }}
         run: |
           set -euo pipefail
           BASE_VERSION="$(node -p "require('./package.json').version.split('-')[0]")"
@@ -150,10 +155,18 @@ jobs:
             VERSION="${BASE_VERSION}-beta.${GITHUB_RUN_NUMBER}"
             DIST_TAG="beta"
             SHOULD_PUBLISH="true"
+          elif [ "${GITHUB_REF_NAME:-}" = "Dev" ]; then
+            VERSION="${BASE_VERSION}-edge.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+            DIST_TAG="edge"
+            if [ "${{ needs.check-prerelease.outputs.changed || 'false' }}" = "true" ] || [ "${FORCE_ROLLING}" = "true" ]; then
+              SHOULD_PUBLISH="true"
+            else
+              SHOULD_PUBLISH="false"
+            fi
           else
             VERSION="${BASE_VERSION}-nightly.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
             DIST_TAG="nightly"
-            if [ "${{ needs.check-nightly.outputs.changed || 'false' }}" = "true" ] || [ "${FORCE_NIGHTLY}" = "true" ]; then
+            if [ "${{ needs.check-prerelease.outputs.changed || 'false' }}" = "true" ] || [ "${FORCE_ROLLING}" = "true" ]; then
               SHOULD_PUBLISH="true"
             else
               SHOULD_PUBLISH="false"
@@ -164,10 +177,10 @@ jobs:
           echo "should_publish=${SHOULD_PUBLISH}" >> "$GITHUB_OUTPUT"
           echo "target_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Stop when nightly is unchanged
+      - name: Stop when prerelease is unchanged
         if: steps.meta.outputs.should_publish != 'true'
         run: |
-          echo "No Git nightly changes since last publish; skipping."
+          echo "No Git prerelease changes since last publish; skipping."
 
       - name: Apply publish version
         if: steps.meta.outputs.should_publish == 'true'
@@ -184,16 +197,17 @@ jobs:
         if: steps.meta.outputs.should_publish == 'true'
         run: npm publish --provenance --access public --tag "${{ steps.meta.outputs.dist_tag }}"
 
-      - name: Update rolling nightly tag
-        if: steps.meta.outputs.should_publish == 'true' && steps.meta.outputs.dist_tag == 'nightly'
+      - name: Update rolling prerelease tag
+        if: steps.meta.outputs.should_publish == 'true' && (steps.meta.outputs.dist_tag == 'nightly' || steps.meta.outputs.dist_tag == 'edge')
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TARGET_SHA: ${{ steps.meta.outputs.target_sha }}
+          DIST_TAG: ${{ steps.meta.outputs.dist_tag }}
         with:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const tag = 'openvcs-git-nightly';
+            const tag = process.env.DIST_TAG === 'edge' ? 'openvcs-git-edge' : 'openvcs-git-nightly';
             try {
               await github.rest.git.deleteRef({ owner, repo, ref: `tags/${tag}` });
             } catch (e) {
@@ -203,7 +217,7 @@ jobs:
 
   release-github:
     name: Create GitHub release
-    if: github.ref_name == 'Stable' || ((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && (needs.check-nightly.outputs.changed == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.force == true || github.event.inputs.force == 'true'))))
+    if: github.ref_name == 'Stable' || (github.event_name == 'schedule' && (needs.check-prerelease.outputs.changed == 'true' || (inputs.force == true || github.event.inputs.force == 'true')))
     needs: [build-artifact, publish-npm]
     runs-on: ubuntu-24.04
     steps:
