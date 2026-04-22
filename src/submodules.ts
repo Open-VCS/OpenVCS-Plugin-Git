@@ -234,7 +234,7 @@ async function syncAllSubmodules(): Promise<void> {
 
 /** Registers the Git submodule toolkit menu and action handlers. */
 export function registerSubmoduleToolkit(): void {
-  const repoMenu = getOrCreateMenu('repository', 'Repository');
+  const repoMenu = getOrCreateMenu('repository', 'Repository', { surface: 'menubar' });
   repoMenu?.addItem({ label: 'Submodules', action: 'repo-submodules' });
 
   registerAction('repo-submodules', async () => {
