@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, it } from 'node:test';
 
 import {
@@ -11,11 +15,43 @@ import {
   buildPullFfOnlyArgs,
   buildPushArgs,
   buildSubmoduleUpdateArgs,
+  parseCommits,
   parseStatusOutput,
 } from '../src/plugin-helpers.js';
 
 import { PluginDefinition, OnPluginStart } from '../src/plugin.js';
-import { planDiscardPaths } from '../src/plugin-request-handler.js';
+import { GitCommand } from '../src/git.js';
+import { GitVcsDelegates, planDiscardPaths } from '../src/plugin-request-handler.js';
+
+/** Runs Git in a test repository and returns trimmed stdout. */
+function runGit(repoPath: string, args: string[]): string {
+  return execFileSync('git', args, {
+    cwd: repoPath,
+    encoding: 'utf8',
+  }).trim();
+}
+
+/** Creates one temporary Git repository seeded with an initial commit. */
+function createTempRepo(): string {
+  const repoPath = mkdtempSync(join(tmpdir(), 'openvcs-git-plugin-'));
+  runGit(repoPath, ['init']);
+  runGit(repoPath, ['config', 'user.name', 'Test User']);
+  runGit(repoPath, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(join(repoPath, 'tracked.txt'), 'base\n', 'utf8');
+  runGit(repoPath, ['add', 'tracked.txt']);
+  runGit(repoPath, ['commit', '-m', 'initial']);
+  return repoPath;
+}
+
+/** Creates delegate dependencies that always resolve a single temp repo session. */
+function createDelegateDeps(repoPath: string) {
+  return {
+    allocateSession: () => 'session-1',
+    closeSession: () => {},
+    requireSession: () => ({ path: repoPath }),
+    createGitCommand: (cwd: string) => new GitCommand(cwd),
+  };
+}
 
 describe('Git plugin helpers', () => {
   describe('parseStatusOutput', () => {
@@ -242,6 +278,203 @@ describe('Git plugin exports', () => {
     it('validates Git and attaches the delegate map', () => {
       OnPluginStart();
       assert.ok(PluginDefinition.vcs, 'PluginDefinition.vcs is populated at startup');
+    });
+  });
+});
+
+describe('Git commit integration', () => {
+  it('stages partial patches against the current index', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const git = new GitCommand(repoPath);
+      writeFileSync(join(repoPath, 'tracked.txt'), 'staged\n', 'utf8');
+      runGit(repoPath, ['add', 'tracked.txt']);
+      writeFileSync(join(repoPath, 'tracked.txt'), 'staged\nunstaged\n', 'utf8');
+
+      const patch = git.diffFile('tracked.txt');
+      assert.match(patch, /\+unstaged/);
+
+      git.stagePatch(patch);
+
+      const cachedDiff = runGit(repoPath, ['diff', '--cached', '--', 'tracked.txt']);
+      assert.match(cachedDiff, /\+staged/);
+      assert.match(cachedDiff, /\+unstaged/);
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it('commits only the index in commitIndex', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const git = new GitCommand(repoPath);
+      writeFileSync(join(repoPath, 'tracked.txt'), 'unstaged only\n', 'utf8');
+      writeFileSync(join(repoPath, 'selected.txt'), 'selected\n', 'utf8');
+      runGit(repoPath, ['add', 'selected.txt']);
+
+      git.commitIndex('index only', 'Commit User', 'commit@example.com');
+
+      assert.strictEqual(runGit(repoPath, ['show', 'HEAD:tracked.txt']), 'base');
+      assert.strictEqual(runGit(repoPath, ['show', 'HEAD:selected.txt']), 'selected');
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it('returns the new head after delegate commitIndex', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const delegates = new GitVcsDelegates(createDelegateDeps(repoPath));
+      writeFileSync(join(repoPath, 'tracked.txt'), 'delegate index\n', 'utf8');
+      runGit(repoPath, ['add', 'tracked.txt']);
+      const previousHead = runGit(repoPath, ['rev-parse', 'HEAD']);
+
+      const commitId = delegates.commitIndex(
+        {
+          session_id: 'session-1',
+          message: 'delegate index commit',
+          name: 'Delegate User',
+          email: 'delegate@example.com',
+        },
+        {} as never,
+      );
+
+      const currentHead = runGit(repoPath, ['rev-parse', 'HEAD']);
+      assert.notStrictEqual(currentHead, previousHead);
+      assert.strictEqual(commitId, currentHead);
+      assert.strictEqual(
+        runGit(repoPath, ['log', '-1', '--format=%an <%ae>']),
+        'Delegate User <delegate@example.com>',
+      );
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it('returns the new head after delegate commit with paths', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const delegates = new GitVcsDelegates(createDelegateDeps(repoPath));
+      writeFileSync(join(repoPath, 'tracked.txt'), 'delegate path commit\n', 'utf8');
+      const previousHead = runGit(repoPath, ['rev-parse', 'HEAD']);
+
+      const commitId = delegates.commit(
+        {
+          session_id: 'session-1',
+          message: 'delegate path commit',
+          name: 'Path User',
+          email: 'path@example.com',
+          paths: ['tracked.txt'],
+        },
+        {} as never,
+      );
+
+      const currentHead = runGit(repoPath, ['rev-parse', 'HEAD']);
+      assert.notStrictEqual(currentHead, previousHead);
+      assert.strictEqual(commitId, currentHead);
+      assert.strictEqual(
+        runGit(repoPath, ['log', '-1', '--format=%an <%ae>']),
+        'Path User <path@example.com>',
+      );
+      assert.strictEqual(runGit(repoPath, ['show', 'HEAD:tracked.txt']), 'delegate path commit');
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Git commit parsing', () => {
+  describe('parseCommits', () => {
+    it('parses commit entries with hash, subject, author, and timestamp', () => {
+      const rawOutput =
+        'abc123def456789012345678901234567890ab\x00Initial commit\x00Test User\x002026-04-22T12:00:00Z\x00\x1e';
+      const commits = parseCommits(rawOutput);
+
+      assert.strictEqual(commits.length, 1);
+      assert.strictEqual(commits[0].id, 'abc123def456789012345678901234567890ab');
+      assert.strictEqual(commits[0].msg, 'Initial commit');
+      assert.strictEqual(commits[0].author, 'Test User');
+    });
+
+    it('stops parsing at the record delimiter and handles multiple commits', () => {
+      const rawOutput =
+        'hash1\x00First\x00Author One\x002026-04-20T10:00:00Z\x00\x1e' +
+        'hash2\x00Second\x00Author Two\x002026-04-21T11:00:00Z\x001e';
+      const commits = parseCommits(rawOutput);
+
+      assert.strictEqual(commits.length, 2);
+      assert.strictEqual(commits[0].id, 'hash1');
+      assert.strictEqual(commits[1].id, 'hash2');
+    });
+
+    it('handles empty input gracefully', () => {
+      const commits = parseCommits('');
+      assert.deepStrictEqual(commits, []);
+    });
+
+    it('omits empty records and trims whitespace', () => {
+      const rawOutput = '  hash1\x00Message\x00Author\x002026-04-20T10:00:00Z\x00  \x1e  ';
+      const commits = parseCommits(rawOutput);
+
+      assert.strictEqual(commits.length, 1);
+      assert.strictEqual(commits[0].id, 'hash1');
+    });
+  });
+
+  describe('listCommits integration', () => {
+    it('populates commit id as the full hash and msg as the subject', () => {
+      const repoPath = createTempRepo();
+
+      try {
+        const git = new GitCommand(repoPath);
+        writeFileSync(join(repoPath, 'tracked.txt'), 'initial\n', 'utf8');
+        runGit(repoPath, ['add', 'tracked.txt']);
+        runGit(repoPath, ['commit', '-m', 'second commit']);
+
+        const result = git.listCommits({});
+        const head = result.commits[0];
+
+        // The id must be exactly the 40-character hash, not hash+subject
+        assert.match(head.id, /^[a-f0-9]{40}$/);
+        assert.strictEqual(head.msg, 'second commit');
+
+        // Verify we can diff the commit using its id
+        const diff = git.diffCommit(head.id);
+        assert.ok(diff.length > 0);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+
+    it('returns correct commit ids that can be used in git diff', () => {
+      const repoPath = createTempRepo();
+
+      try {
+        const git = new GitCommand(repoPath);
+        writeFileSync(join(repoPath, 'tracked.txt'), 'content\n', 'utf8');
+        runGit(repoPath, ['add', 'tracked.txt']);
+        runGit(repoPath, ['commit', '-m', 'add content']);
+
+        const result = git.listCommits({ limit: 2 });
+        const nonInitialCommits = result.commits.filter((c) => c.parent_oid);
+
+        // Commit ids should be valid 40-char hashes
+        for (const commit of result.commits) {
+          assert.match(commit.id, /^[a-f0-9]{40}$/);
+        }
+
+        // Non-initial commits should work with diffCommit (they have parents)
+        if (nonInitialCommits.length > 0) {
+          const diff = git.diffCommit(nonInitialCommits[0].id);
+          assert.ok(diff.length > 0);
+        }
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
     });
   });
 });

@@ -348,9 +348,13 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): string {
     const git = this.requireGit(params.session_id);
-    const result = git.runChecked(['rev-parse', 'HEAD'], 'git-commit-failed');
-    git.commit(asTrimmedString(params.message));
-    return result.stdout.trim();
+    git.commit(
+      asTrimmedString(params.message),
+      asTrimmedString(params.name),
+      asTrimmedString(params.email),
+      asStringArray(params.paths),
+    );
+    return git.currentHead();
   }
 
   override commitIndex(
@@ -358,14 +362,12 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): string {
     const git = this.requireGit(params.session_id);
-    const result = git.runChecked(['rev-parse', 'HEAD'], 'git-commit-failed');
     git.commitIndex(
       asTrimmedString(params.message),
       asTrimmedString(params.name),
       asTrimmedString(params.email),
-      asStringArray(params.paths),
     );
-    return result.stdout.trim();
+    return git.currentHead();
   }
 
   override getStatusSummary(
@@ -460,6 +462,15 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
   ): null {
     const git = this.requireGit(params.session_id);
     git.stagePatch(asString(params.patch));
+    return null;
+  }
+
+  override stagePaths(
+    params: OpenVcs.VcsStagePathsParams,
+    _context: PluginRuntimeContext,
+  ): null {
+    const git = this.requireGit(params.session_id);
+    git.stagePaths(asStringArray(params.paths));
     return null;
   }
 

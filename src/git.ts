@@ -274,29 +274,47 @@ export class GitCommand {
     return this.runChecked(args, 'git-pull-failed');
   }
 
-  commit(message: string): GitCommandResult {
-    return this.runChecked(['commit', '-m', message], 'git-commit-failed');
+  /** Returns the current HEAD commit id. */
+  currentHead(): string {
+    return this.runChecked(['rev-parse', 'HEAD'], 'git-head-failed').stdout.trim();
   }
 
-  commitIndex(message?: string, name?: string, email?: string, paths?: string[]): GitCommandResult {
-    const args = ['commit'];
-    
-    if (paths && paths.length > 0) {
-      args.push('--', ...paths);
-    } else {
-      args.push('-a');
-    }
-    
-    const commitMessage = message || 'Stage changes';
-    
+  /** Creates a commit, optionally limited to the provided paths. */
+  commit(message: string, name?: string, email?: string, paths?: string[]): GitCommandResult {
     const execArgs = [
       ...(name ? ['-c', `user.name=${name}`] : []),
       ...(email ? ['-c', `user.email=${email}`] : []),
-      ...args,
-      '-m', commitMessage,
+      'commit',
+      '-m',
+      message,
+      ...(paths && paths.length > 0 ? ['--', ...paths] : []),
     ];
-    
+
     return this.runChecked(execArgs, 'git-commit-failed');
+  }
+
+  /** Creates a commit from the current index only. */
+  commitIndex(message?: string, name?: string, email?: string): GitCommandResult {
+    const commitMessage = message || 'Stage changes';
+
+    const execArgs = [
+      ...(name ? ['-c', `user.name=${name}`] : []),
+      ...(email ? ['-c', `user.email=${email}`] : []),
+      'commit',
+      '-m',
+      commitMessage,
+    ];
+
+    return this.runChecked(execArgs, 'git-commit-failed');
+  }
+
+  /** Stages the provided repository-relative paths into the index. */
+  stagePaths(paths: string[]): void {
+    if (paths.length === 0) {
+      return;
+    }
+
+    this.runChecked(['add', '-A', '--', ...paths], 'git-stage-paths-failed');
   }
 
   listCommits(options: ListCommitsOptions = {}): { commits: CommitEntry[]; exitCode: number } {
@@ -330,7 +348,7 @@ export class GitCommand {
       args.push(`--until=${options.until_utc}`);
     }
 
-    args.push('--pretty=format:%H%f%x00%aN%x00%aI%x00%P%x1e');
+    args.push('--pretty=format:%H%x00%s%x00%aN%x00%aI%x00%P%x1e');
 
     if (options.branch) {
       args.push(options.branch);
@@ -525,8 +543,11 @@ export class GitCommand {
     return this.run(['hash-object', '-w', '--stdin'], { stdin: content }).stdout.trim();
   }
 
+  /** Stages a textual patch into the index without requiring worktree/index parity. */
   stagePatch(patch: string): void {
-    this.runChecked(['apply', '--3way', '--index'], 'git-stage-patch-failed', { stdin: patch });
+    this.runChecked(['apply', '--cached', '--unidiff-zero'], 'git-stage-patch-failed', {
+      stdin: patch,
+    });
   }
 
   applyReversePatch(patch: string): void {
