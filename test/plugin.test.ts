@@ -20,7 +20,8 @@ import {
 } from '../src/plugin-helpers.js';
 
 import { PluginDefinition, OnPluginStart } from '../src/plugin.js';
-import { GitCommand } from '../src/git.js';
+import { GitCommand, type ListCommitsOptions } from '../src/git.js';
+import type { GitCommandResult } from '../src/plugin-types.js';
 import { GitVcsDelegates, planDiscardPaths } from '../src/plugin-request-handler.js';
 
 /** Runs Git in a test repository and returns trimmed stdout. */
@@ -51,6 +52,16 @@ function createDelegateDeps(repoPath: string) {
     requireSession: () => ({ path: repoPath }),
     createGitCommand: (cwd: string) => new GitCommand(cwd),
   };
+}
+
+/** Creates delegate dependencies backed by one mock git command. */
+function createMockDelegate(mockGit: Partial<GitCommand>) {
+  return new GitVcsDelegates({
+    allocateSession: () => 'session-1',
+    closeSession: () => {},
+    requireSession: () => ({ path: '/tmp/mock-repo' }),
+    createGitCommand: () => mockGit as GitCommand,
+  });
 }
 
 describe('Git plugin helpers', () => {
@@ -475,6 +486,91 @@ describe('Git commit parsing', () => {
       } finally {
         rmSync(repoPath, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe('listCommits query validation', () => {
+    it('forwards only actual boolean values to git.listCommits', () => {
+      const calls: ListCommitsOptions[] = [];
+      const delegates = createMockDelegate({
+        listCommits: (options: ListCommitsOptions = {}) => {
+          calls.push(options);
+          return { commits: [], exitCode: 0 };
+        },
+      });
+
+      delegates.listCommits(
+        {
+          session_id: 'session-1',
+          query: { topo_order: true, include_merges: false },
+        },
+        {} as never,
+      );
+      delegates.listCommits(
+        {
+          session_id: 'session-1',
+          query: { topo_order: 'invalid' as never, include_merges: 1 as never },
+        },
+        {} as never,
+      );
+
+      assert.deepStrictEqual(calls, [
+        {
+          branch: undefined,
+          skip: undefined,
+          limit: 0,
+          topo_order: true,
+          include_merges: false,
+          author_contains: undefined,
+          since_utc: undefined,
+          until_utc: undefined,
+          path: undefined,
+        },
+        {
+          branch: undefined,
+          skip: undefined,
+          limit: 0,
+          topo_order: undefined,
+          include_merges: undefined,
+          author_contains: undefined,
+          since_utc: undefined,
+          until_utc: undefined,
+          path: undefined,
+        },
+      ]);
+    });
+  });
+
+  describe('discardPaths fail-closed behavior', () => {
+    it('skips clean and rethrows the original restore failure', () => {
+      const calls: string[][] = [];
+      const restoreFailure = new Error('restore failed');
+      const statusResult: GitCommandResult = {
+        status: 0,
+        stdout: ' M tracked.txt\0?? scratch.txt\0',
+        stderr: '',
+      };
+      const delegates = createMockDelegate({
+        runChecked: (args: string[]) => {
+          calls.push(args);
+          if (args[0] === 'status') {
+            return statusResult;
+          }
+          if (args[0] === 'restore') {
+            throw restoreFailure;
+          }
+          return statusResult;
+        },
+      });
+
+      assert.throws(
+        () => delegates.discardPaths({ session_id: 'session-1', paths: ['tracked.txt', 'scratch.txt'] }, {} as never),
+        (error) => error === restoreFailure,
+      );
+      assert.deepStrictEqual(calls, [
+        ['status', '--porcelain=1', '-z', '-uall', '--', 'tracked.txt', 'scratch.txt'],
+        ['restore', '--source=HEAD', '--staged', '--worktree', '--', 'tracked.txt'],
+      ]);
     });
   });
 });

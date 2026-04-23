@@ -30,6 +30,11 @@ export interface DiscardPathPlan {
   clean: string[];
 }
 
+/** Returns an optional boolean only when the input is already a boolean. */
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
 /** Reduces a file status string to the primary status code needed for discard routing. */
 function getPrimaryDiscardStatus(status: string): string {
   const normalized = asTrimmedString(status);
@@ -396,8 +401,8 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
       branch: asTrimmedString(query.rev) || undefined,
       skip: asNumber(query.skip, 0) || undefined,
       limit: asNumber(query.limit, 0),
-      topo_order: query.topo_order as boolean ?? undefined,
-      include_merges: query.include_merges as boolean ?? undefined,
+      topo_order: asOptionalBoolean(query.topo_order),
+      include_merges: asOptionalBoolean(query.include_merges),
       author_contains: asTrimmedString(query.author_contains) || undefined,
       since_utc: asTrimmedString(query.since_utc) || undefined,
       until_utc: asTrimmedString(query.until_utc) || undefined,
@@ -490,23 +495,38 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     );
     const discardPlan = planDiscardPaths(status.stdout);
 
+    let failure: unknown;
+
     if (discardPlan.unstageThenRemove.length > 0) {
-      git.runChecked(
-        ['rm', '-f', '--cached', '--', ...discardPlan.unstageThenRemove],
-        'git-discard-paths-failed',
-      );
+      try {
+        git.runChecked(
+          ['rm', '-f', '--cached', '--', ...discardPlan.unstageThenRemove],
+          'git-discard-paths-failed',
+        );
+      } catch (error) {
+        failure = error;
+      }
     }
 
-    if (discardPlan.restore.length > 0) {
-      git.runChecked(
-        ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...discardPlan.restore],
-        'git-discard-paths-failed',
-      );
+    if (!failure && discardPlan.restore.length > 0) {
+      try {
+        git.runChecked(
+          ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...discardPlan.restore],
+          'git-discard-paths-failed',
+        );
+      } catch (error) {
+        failure = error;
+      }
     }
 
-    if (discardPlan.clean.length > 0) {
+    if (!failure && discardPlan.clean.length > 0) {
       git.runChecked(['clean', '-f', '--', ...discardPlan.clean], 'git-discard-paths-failed');
     }
+
+    if (failure) {
+      throw failure;
+    }
+
     return null;
   }
 

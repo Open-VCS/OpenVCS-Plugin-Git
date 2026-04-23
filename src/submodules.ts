@@ -26,7 +26,7 @@ function payloadString(payload: ModalActionPayload, key: string): string {
 }
 
 /** Builds one modal row for a submodule entry. */
-function buildSubmoduleRow(entry: SubmoduleEntry) {
+export function buildSubmoduleRow(entry: SubmoduleEntry) {
   const metaBits = [entry.commit ? `commit ${entry.commit}` : '', entry.branch ? `branch ${entry.branch}` : '']
     .map((part) => String(part || '').trim())
     .filter(Boolean);
@@ -62,13 +62,52 @@ function buildSubmoduleRow(entry: SubmoduleEntry) {
   };
 }
 
+/** Builds an error fallback modal with a descriptive message. */
+function buildErrorModal(message: string): ModalBuilder {
+  return new ModalBuilder('Error').text(message).text('Please try again or check the Git repository state.');
+}
+
+/** Opens a fallback modal for a submodule UI failure and preserves the original error on fallback failure. */
+export async function handleSubmoduleModalError(
+  prefix: string,
+  error: unknown,
+  openFallback: (message: string) => Promise<unknown> = (message) => buildErrorModal(message).open(),
+): Promise<unknown> {
+  const message = error instanceof Error ? error.message : String(error);
+  const fullMessage = `${prefix}: ${message}`;
+  console.error(`Git submodules: ${fullMessage}`);
+
+  try {
+    return await openFallback(fullMessage);
+  } catch {
+    throw error;
+  }
+}
+
 /** Builds and opens the submodule manager modal. */
 async function openSubmodulesModal(): Promise<unknown> {
   const git = createGitCommand();
-  const entries = git.listSubmodules();
+
+  let entries: SubmoduleEntry[];
+  try {
+    entries = git.listSubmodules();
+  } catch (error) {
+    return handleSubmoduleModalError('failed to list submodules', error);
+  }
+
   console.log('Git submodules: building modal', { count: entries.length });
 
-  const modal = new ModalBuilder('Manage Submodules')
+  const modal = buildSubmodulesModal(entries);
+  try {
+    return await modal.open();
+  } catch (error) {
+    return handleSubmoduleModalError('failed to open modal', error);
+  }
+}
+
+/** Builds the submodule manager modal with given entries. */
+function buildSubmodulesModal(entries: SubmoduleEntry[]): ModalBuilder {
+  return new ModalBuilder('Manage Submodules')
     .text('Review, add, update, sync, and remove submodules without leaving Git.')
     .text('Use Update Remote to follow each submodule branch configured in .gitmodules.')
     .separator()
@@ -130,14 +169,13 @@ async function openSubmodulesModal(): Promise<unknown> {
       emptyText: 'This repository has no submodules yet.',
       items: entries.map((entry) => buildSubmoduleRow(entry)),
     });
-
-  return modal.open();
 }
 
 /** Builds and opens the remove confirmation modal for one submodule. */
 async function openRemoveConfirmationModal(path: string, name?: string): Promise<unknown> {
   const submodulePath = String(path || '').trim();
   if (!submodulePath) return;
+
   console.log('Git submodules: building remove confirmation', { path: submodulePath, name });
 
   const modal = new ModalBuilder('Confirm Submodule Removal')
@@ -156,7 +194,11 @@ async function openRemoveConfirmationModal(path: string, name?: string): Promise
       { gap: '.5rem', align: 'centered', wrap: true },
     );
 
-  return modal.open();
+  try {
+    return await modal.open();
+  } catch (error) {
+    return handleSubmoduleModalError('failed to open remove confirmation modal', error);
+  }
 }
 
 /** Removes one submodule and refreshes the toolkit modal. */
