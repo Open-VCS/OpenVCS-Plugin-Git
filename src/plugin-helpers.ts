@@ -74,11 +74,35 @@ export function buildPushArgs(params: RequestParams): string[] {
   return args;
 }
 
+/** Builds `git clone` arguments with recursive submodule initialization enabled. */
+export function buildCloneArgs(params: RequestParams): string[] {
+  const args = ['clone', '--recurse-submodules'];
+  pushOptionalArg(args, params.url);
+  pushOptionalArg(args, params.dest);
+  return args;
+}
+
 /** Builds `git pull --ff-only` arguments while omitting empty optional values. */
 export function buildPullFfOnlyArgs(params: RequestParams): string[] {
   const args = ['pull', '--ff-only'];
   pushOptionalArg(args, params.remote);
   pushOptionalArg(args, params.branch);
+  return args;
+}
+
+/** Builds `git submodule update` arguments for pinned or remote-tracking updates. */
+export function buildSubmoduleUpdateArgs(params: RequestParams): string[] {
+  const args = ['submodule', 'update', '--init', '--recursive'];
+
+  if (params.remote === true) {
+    args.push('--remote');
+  }
+
+  const path = asTrimmedString(params.path);
+  if (path) {
+    args.push('--', path);
+  }
+
   return args;
 }
 
@@ -160,6 +184,40 @@ export function parseStatusOutput(output: string): StatusParseResult {
       files,
       ahead,
       behind,
+    },
+  };
+}
+
+/** Applies submodule-specific status labels to known submodule paths. */
+export function applySubmoduleStatusHints(
+  parsed: StatusParseResult,
+  submodulePaths: Iterable<string>,
+): StatusParseResult {
+  const knownPaths = new Set(
+    Array.from(submodulePaths)
+      .map((entry) => asTrimmedString(entry))
+      .filter(Boolean),
+  );
+
+  if (knownPaths.size === 0) {
+    return parsed;
+  }
+
+  return {
+    ...parsed,
+    payload: {
+      ...parsed.payload,
+      files: parsed.payload.files.map((file) => {
+        const path = asTrimmedString(file.path);
+        if (!knownPaths.has(path)) {
+          return file;
+        }
+
+        return {
+          ...file,
+          status: 'S',
+        };
+      }),
     },
   };
 }

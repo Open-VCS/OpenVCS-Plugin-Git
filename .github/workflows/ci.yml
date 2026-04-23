@@ -61,6 +61,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Create dist directory
+        run: mkdir -p dist
+
       - name: Pack plugin
         run: npm pack --pack-destination dist
 

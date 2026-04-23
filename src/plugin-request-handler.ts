@@ -14,9 +14,92 @@ import {
   asString,
   asStringArray,
   asTrimmedString,
+  buildCloneArgs,
+  parseStatusOutput,
 } from './plugin-helpers.js';
 import { GitCommand } from './git.js';
 import type { GitSession } from './plugin-types.js';
+
+/** Describes the Git operations needed to discard a set of paths safely. */
+export interface DiscardPathPlan {
+  /** Restores tracked paths from HEAD in both the index and worktree. */
+  restore: string[];
+  /** Removes newly added index entries before deleting their worktree files. */
+  unstageThenRemove: string[];
+  /** Deletes untracked worktree paths after index state has been corrected. */
+  clean: string[];
+}
+
+/** Returns an optional boolean only when the input is already a boolean. */
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+/** Reduces a file status string to the primary status code needed for discard routing. */
+function getPrimaryDiscardStatus(status: string): string {
+  const normalized = asTrimmedString(status);
+  if (!normalized) {
+    return 'M';
+  }
+
+  for (const candidate of ['?', 'R', 'C', 'A', 'D', 'U', 'T', 'S', 'M']) {
+    if (normalized.includes(candidate)) {
+      return candidate;
+    }
+  }
+
+  return normalized[0] ?? 'M';
+}
+
+/** Builds a discard plan that handles tracked, added, copied, and renamed paths. */
+export function planDiscardPaths(statusOutput: string): DiscardPathPlan {
+  const restore = new Set<string>();
+  const unstageThenRemove = new Set<string>();
+  const clean = new Set<string>();
+  const parsed = parseStatusOutput(statusOutput);
+
+  for (const file of parsed.payload.files) {
+    const path = asTrimmedString(file.path);
+    const oldPath = asTrimmedString(file.old_path);
+    const primaryStatus = getPrimaryDiscardStatus(file.status);
+
+    if (!path) {
+      continue;
+    }
+
+    if (primaryStatus === '?') {
+      clean.add(path);
+      continue;
+    }
+
+    if (primaryStatus === 'R') {
+      if (oldPath) {
+        restore.add(oldPath);
+      }
+      if (file.staged) {
+        unstageThenRemove.add(path);
+      }
+      clean.add(path);
+      continue;
+    }
+
+    if (primaryStatus === 'C' || primaryStatus === 'A') {
+      if (file.staged) {
+        unstageThenRemove.add(path);
+      }
+      clean.add(path);
+      continue;
+    }
+
+    restore.add(path);
+  }
+
+  return {
+    restore: Array.from(restore),
+    unstageThenRemove: Array.from(unstageThenRemove),
+    clean: Array.from(clean),
+  };
+}
 
 /** Describes the Git runtime services consumed by the VCS delegates. */
 export interface GitRuntimeDependencies {
@@ -92,7 +175,7 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     }
 
     const git = this.deps.createGitCommand(process.cwd());
-    const output = git.runChecked(['clone', url, destination], 'vcs-clone-failed');
+    const output = git.runChecked(buildCloneArgs({ url, dest: destination }), 'vcs-clone-failed');
     const lines = `${output.stdout}\n${output.stderr}`
       .split(/\r?\n/g)
       .map((line) => line.trim())
@@ -270,9 +353,13 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): string {
     const git = this.requireGit(params.session_id);
-    const result = git.runChecked(['rev-parse', 'HEAD'], 'git-commit-failed');
-    git.commit(asTrimmedString(params.message));
-    return result.stdout.trim();
+    git.commit(
+      asTrimmedString(params.message),
+      asTrimmedString(params.name),
+      asTrimmedString(params.email),
+      asStringArray(params.paths),
+    );
+    return git.currentHead();
   }
 
   override commitIndex(
@@ -280,14 +367,12 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): string {
     const git = this.requireGit(params.session_id);
-    const result = git.runChecked(['rev-parse', 'HEAD'], 'git-commit-failed');
     git.commitIndex(
       asTrimmedString(params.message),
       asTrimmedString(params.name),
       asTrimmedString(params.email),
-      asStringArray(params.paths),
     );
-    return result.stdout.trim();
+    return git.currentHead();
   }
 
   override getStatusSummary(
@@ -316,8 +401,8 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
       branch: asTrimmedString(query.rev) || undefined,
       skip: asNumber(query.skip, 0) || undefined,
       limit: asNumber(query.limit, 0),
-      topo_order: query.topo_order as boolean ?? undefined,
-      include_merges: query.include_merges as boolean ?? undefined,
+      topo_order: asOptionalBoolean(query.topo_order),
+      include_merges: asOptionalBoolean(query.include_merges),
       author_contains: asTrimmedString(query.author_contains) || undefined,
       since_utc: asTrimmedString(query.since_utc) || undefined,
       until_utc: asTrimmedString(query.until_utc) || undefined,
@@ -385,6 +470,15 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     return null;
   }
 
+  override stagePaths(
+    params: OpenVcs.VcsStagePathsParams,
+    _context: PluginRuntimeContext,
+  ): null {
+    const git = this.requireGit(params.session_id);
+    git.stagePaths(asStringArray(params.paths));
+    return null;
+  }
+
   override discardPaths(
     params: OpenVcs.VcsDiscardPathsParams,
     _context: PluginRuntimeContext,
@@ -395,7 +489,44 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
       return null;
     }
 
-    git.runChecked(['checkout', '--', ...paths], 'git-discard-paths-failed');
+    const status = git.runChecked(
+      ['status', '--porcelain=1', '-z', '-uall', '--', ...paths],
+      'git-discard-paths-failed',
+    );
+    const discardPlan = planDiscardPaths(status.stdout);
+
+    let failure: unknown;
+
+    if (discardPlan.unstageThenRemove.length > 0) {
+      try {
+        git.runChecked(
+          ['rm', '-f', '--cached', '--', ...discardPlan.unstageThenRemove],
+          'git-discard-paths-failed',
+        );
+      } catch (error) {
+        failure = error;
+      }
+    }
+
+    if (!failure && discardPlan.restore.length > 0) {
+      try {
+        git.runChecked(
+          ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...discardPlan.restore],
+          'git-discard-paths-failed',
+        );
+      } catch (error) {
+        failure = error;
+      }
+    }
+
+    if (!failure && discardPlan.clean.length > 0) {
+      git.runChecked(['clean', '-f', '--', ...discardPlan.clean], 'git-discard-paths-failed');
+    }
+
+    if (failure) {
+      throw failure;
+    }
+
     return null;
   }
 

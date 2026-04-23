@@ -58,7 +58,7 @@ export function OnPluginStart(): void {
   const delegates = new GitVcsDelegates(createGitRuntimeDependencies());
   PluginDefinition.vcs = delegates.toDelegates();
 
-  const repoMenu = getOrCreateMenu('repository', 'Repository');
+  const repoMenu = getOrCreateMenu('repository', 'Repository', { surface: 'menubar' });
   if (repoMenu) {
     repoMenu.addItem({ label: 'Edit .gitignore', action: 'repo-edit-gitignore' });
     repoMenu.addItem({ label: 'Edit .gitattributes', action: 'repo-edit-gitattributes' });
