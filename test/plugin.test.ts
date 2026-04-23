@@ -396,6 +396,46 @@ describe('Git commit integration', () => {
       rmSync(repoPath, { recursive: true, force: true });
     }
   });
+
+  it('commits after staging with stage_paths for selected-path commit flow', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const delegates = new GitVcsDelegates(createDelegateDeps(repoPath));
+      writeFileSync(join(repoPath, 'tracked.txt'), 'staged via stage_paths\n', 'utf8');
+
+      // Simulate selected-path flow: stage the path, then commit with paths
+      delegates.stagePaths(
+        {
+          session_id: 'session-1',
+          paths: ['tracked.txt'],
+        },
+        {} as never,
+      );
+
+      const commitId = delegates.commit(
+        {
+          session_id: 'session-1',
+          message: 'commit after stage_paths',
+          name: 'Stage User',
+          email: 'stage@example.com',
+          paths: ['tracked.txt'],
+        },
+        {} as never,
+      );
+
+      // Verify the staged change was committed
+      const currentHead = runGit(repoPath, ['rev-parse', 'HEAD']);
+      assert.strictEqual(commitId, currentHead);
+      assert.strictEqual(runGit(repoPath, ['show', 'HEAD:tracked.txt']), 'staged via stage_paths');
+      assert.strictEqual(
+        runGit(repoPath, ['log', '-1', '--format=%an <%ae>']),
+        'Stage User <stage@example.com>',
+      );
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Git commit parsing', () => {
