@@ -562,9 +562,10 @@ export class GitCommand {
     this.runChecked(['reset', '--soft', ref], 'git-reset-soft-failed');
   }
 
+  /** Reads the effective Git commit identity from config. */
   getIdentity(): { name: string; email: string } | null {
-    const nameResult = this.run(['config', '--local', 'user.name']);
-    const emailResult = this.run(['config', '--local', 'user.email']);
+    const nameResult = this.run(['config', '--get', 'user.name']);
+    const emailResult = this.run(['config', '--get', 'user.email']);
 
     if (nameResult.status !== 0 || emailResult.status !== 0) {
       return null;
@@ -576,6 +577,7 @@ export class GitCommand {
     };
   }
 
+  /** Stores repository-local commit identity in Git config. */
   setIdentityLocal(name: string, email: string): void {
     this.runChecked(['config', '--local', 'user.name', name], 'git-identity-set-failed');
     this.runChecked(['config', '--local', 'user.email', email], 'git-identity-set-failed');
