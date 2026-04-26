@@ -1,12 +1,12 @@
 {
   "name": "@openvcs/git-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenVCS Git plugin - Node.js runtime",
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/Open-VCS/OpenVCS-Plugin-Git",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Open-VCS/OpenVCS-Plugin-Git"
+    "url": "git+https://github.com/Open-VCS/OpenVCS-Plugin-Git.git"
   },
   "bugs": {
     "url": "https://github.com/Open-VCS/OpenVCS-Plugin-Git/issues"
