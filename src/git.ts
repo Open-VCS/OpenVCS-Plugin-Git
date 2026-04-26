@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { spawnSync } from 'node:child_process';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { pluginError } from '@openvcs/sdk/runtime';
 import type {
@@ -12,10 +14,12 @@ import type {
 } from '@openvcs/sdk/types';
 import type { GitCommandResult, RunGitOptions } from './plugin-types.js';
 import {
+  applySubmoduleStatusHints,
   asString,
   buildFetchArgs,
   buildPullFfOnlyArgs,
   buildPushArgs,
+  buildSubmoduleUpdateArgs,
   parseCommits,
   parseStatusOutput,
 } from './plugin-helpers.js';
@@ -70,6 +74,15 @@ export interface StashEntry {
   selector: string;
   msg: string;
   meta: string;
+}
+
+export interface SubmoduleEntry {
+  path: string;
+  name: string;
+  url?: string;
+  branch?: string;
+  commit?: string;
+  state: 'clean' | 'dirty' | 'uninitialized' | 'conflicted';
 }
 
 export class GitCommand {
@@ -137,7 +150,7 @@ export class GitCommand {
 
   status(): StatusParseResult & { exitCode: number } {
     const result = this.run(['status', '--porcelain=1', '--branch', '-z', '-uall']);
-    const parsed = parseStatusOutput(result.stdout);
+    const parsed = applySubmoduleStatusHints(parseStatusOutput(result.stdout), this.listSubmodulePaths());
     return { ...parsed, exitCode: result.status };
   }
 
@@ -261,29 +274,47 @@ export class GitCommand {
     return this.runChecked(args, 'git-pull-failed');
   }
 
-  commit(message: string): GitCommandResult {
-    return this.runChecked(['commit', '-m', message], 'git-commit-failed');
+  /** Returns the current HEAD commit id. */
+  currentHead(): string {
+    return this.runChecked(['rev-parse', 'HEAD'], 'git-head-failed').stdout.trim();
   }
 
-  commitIndex(message?: string, name?: string, email?: string, paths?: string[]): GitCommandResult {
-    const args = ['commit'];
-    
-    if (paths && paths.length > 0) {
-      args.push('--', ...paths);
-    } else {
-      args.push('-a');
-    }
-    
-    const commitMessage = message || 'Stage changes';
-    
+  /** Creates a commit, optionally limited to the provided paths. */
+  commit(message: string, name?: string, email?: string, paths?: string[]): GitCommandResult {
     const execArgs = [
       ...(name ? ['-c', `user.name=${name}`] : []),
       ...(email ? ['-c', `user.email=${email}`] : []),
-      ...args,
-      '-m', commitMessage,
+      'commit',
+      '-m',
+      message,
+      ...(paths && paths.length > 0 ? ['--', ...paths] : []),
     ];
-    
+
     return this.runChecked(execArgs, 'git-commit-failed');
+  }
+
+  /** Creates a commit from the current index only. */
+  commitIndex(message?: string, name?: string, email?: string): GitCommandResult {
+    const commitMessage = message || 'Stage changes';
+
+    const execArgs = [
+      ...(name ? ['-c', `user.name=${name}`] : []),
+      ...(email ? ['-c', `user.email=${email}`] : []),
+      'commit',
+      '-m',
+      commitMessage,
+    ];
+
+    return this.runChecked(execArgs, 'git-commit-failed');
+  }
+
+  /** Stages the provided repository-relative paths into the index. */
+  stagePaths(paths: string[]): void {
+    if (paths.length === 0) {
+      return;
+    }
+
+    this.runChecked(['add', '-A', '--', ...paths], 'git-stage-paths-failed');
   }
 
   listCommits(options: ListCommitsOptions = {}): { commits: CommitEntry[]; exitCode: number } {
@@ -317,7 +348,7 @@ export class GitCommand {
       args.push(`--until=${options.until_utc}`);
     }
 
-    args.push('--pretty=format:%H%f%x00%aN%x00%aI%x00%P%x1e');
+    args.push('--pretty=format:%H%x00%s%x00%aN%x00%aI%x00%P%x1e');
 
     if (options.branch) {
       args.push(options.branch);
@@ -330,6 +361,138 @@ export class GitCommand {
     const result = this.run(args);
     const commits = parseCommits(result.stdout);
     return { commits, exitCode: result.status };
+  }
+
+  /** Reads `.gitmodules` entries indexed by submodule name and path. */
+  private readSubmoduleConfig(): {
+    byName: Map<string, { name: string; path?: string; url?: string; branch?: string }>;
+    byPath: Map<string, { name: string; url?: string; branch?: string }>;
+  } {
+    const configResult = this.run(['config', '-f', '.gitmodules', '--null', '--list']);
+    const byName = new Map<string, { name: string; path?: string; url?: string; branch?: string }>();
+
+    if (configResult.status === 0) {
+      for (const entry of configResult.stdout.split('\0')) {
+        const trimmed = entry.trim();
+        if (!trimmed) continue;
+
+        const splitAt = trimmed.indexOf('\n');
+        if (splitAt < 0) continue;
+
+        const key = trimmed.slice(0, splitAt).trim();
+        const value = trimmed.slice(splitAt + 1);
+        const match = key.match(/^submodule\.(.+)\.(path|url|branch)$/);
+        if (!match) continue;
+
+        const [, name, field] = match;
+        const target = byName.get(name) || { name };
+
+        if (field === 'path') target.path = value;
+        if (field === 'url') target.url = value;
+        if (field === 'branch') target.branch = value;
+
+        byName.set(name, target);
+      }
+    }
+
+    const byPath = new Map<string, { name: string; url?: string; branch?: string }>();
+    for (const entry of byName.values()) {
+      if (entry.path) {
+        byPath.set(entry.path, entry);
+      }
+    }
+
+    return { byName, byPath };
+  }
+
+  /** Returns known submodule paths from `.gitmodules`. */
+  private listSubmodulePaths(): Set<string> {
+    return new Set(this.readSubmoduleConfig().byPath.keys());
+  }
+
+  listSubmodules(): SubmoduleEntry[] {
+    const { byPath: configByPath } = this.readSubmoduleConfig();
+
+    const statusResult = this.run(['submodule', 'status', '--recursive']);
+    if (statusResult.status !== 0) {
+      return [];
+    }
+
+    const stateFor = (marker: string): SubmoduleEntry['state'] => {
+      if (marker === '-') return 'uninitialized';
+      if (marker === '+') return 'dirty';
+      if (marker === 'U') return 'conflicted';
+      return 'clean';
+    };
+
+    const entries: SubmoduleEntry[] = [];
+    for (const rawLine of statusResult.stdout.split(/\r?\n/g)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      const marker = line[0] || ' ';
+      const rest = line.slice(1).trim();
+      const [commit = '', path = ''] = rest.split(/\s+/);
+      if (!path) continue;
+
+      const config = configByPath.get(path);
+      entries.push({
+        path,
+        name: config?.name || path.split('/').filter(Boolean).at(-1) || path,
+        url: config?.url,
+        branch: config?.branch,
+        commit,
+        state: stateFor(marker),
+      });
+    }
+
+    return entries.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  addSubmodule(url: string, path: string, name?: string, branch?: string): GitCommandResult {
+    const args = ['submodule', 'add'];
+    if (name) args.push('--name', name);
+    if (branch) args.push('--branch', branch);
+    args.push(url, path);
+    return this.runChecked(args, 'git-submodule-add-failed');
+  }
+
+  updateSubmodule(path: string): GitCommandResult {
+    return this.runChecked(buildSubmoduleUpdateArgs({ path }), 'git-submodule-update-failed');
+  }
+
+  updateAllSubmodules(): GitCommandResult {
+    return this.runChecked(buildSubmoduleUpdateArgs({}), 'git-submodule-update-failed');
+  }
+
+  /** Updates one submodule from its configured branch recursively. */
+  updateSubmoduleRemote(path: string): GitCommandResult {
+    return this.runChecked(buildSubmoduleUpdateArgs({ path, remote: true }), 'git-submodule-update-remote-failed');
+  }
+
+  /** Updates all submodules from their configured branches recursively. */
+  updateAllSubmodulesRemote(): GitCommandResult {
+    return this.runChecked(buildSubmoduleUpdateArgs({ remote: true }), 'git-submodule-update-remote-failed');
+  }
+
+  syncSubmodule(path: string): GitCommandResult {
+    return this.runChecked(['submodule', 'sync', '--recursive', '--', path], 'git-submodule-sync-failed');
+  }
+
+  syncAllSubmodules(): GitCommandResult {
+    return this.runChecked(['submodule', 'sync', '--recursive'], 'git-submodule-sync-failed');
+  }
+
+  removeSubmodule(path: string): void {
+    this.runChecked(['submodule', 'deinit', '-f', '--', path], 'git-submodule-remove-failed');
+    this.runChecked(['rm', '-f', '--', path], 'git-submodule-remove-failed');
+
+    const modulesPath = join(this.cwd, '.git', 'modules', path);
+    try {
+      rmSync(modulesPath, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup.
+    }
   }
 
   diffFile(path: string): string {
@@ -380,8 +543,11 @@ export class GitCommand {
     return this.run(['hash-object', '-w', '--stdin'], { stdin: content }).stdout.trim();
   }
 
+  /** Stages a textual patch into the index without requiring worktree/index parity. */
   stagePatch(patch: string): void {
-    this.runChecked(['apply', '--3way', '--index'], 'git-stage-patch-failed', { stdin: patch });
+    this.runChecked(['apply', '--cached', '--unidiff-zero'], 'git-stage-patch-failed', {
+      stdin: patch,
+    });
   }
 
   applyReversePatch(patch: string): void {
@@ -396,9 +562,10 @@ export class GitCommand {
     this.runChecked(['reset', '--soft', ref], 'git-reset-soft-failed');
   }
 
+  /** Reads the effective Git commit identity from config. */
   getIdentity(): { name: string; email: string } | null {
-    const nameResult = this.run(['config', '--local', 'user.name']);
-    const emailResult = this.run(['config', '--local', 'user.email']);
+    const nameResult = this.run(['config', '--get', 'user.name']);
+    const emailResult = this.run(['config', '--get', 'user.email']);
 
     if (nameResult.status !== 0 || emailResult.status !== 0) {
       return null;
@@ -410,6 +577,7 @@ export class GitCommand {
     };
   }
 
+  /** Stores repository-local commit identity in Git config. */
   setIdentityLocal(name: string, email: string): void {
     this.runChecked(['config', '--local', 'user.name', name], 'git-identity-set-failed');
     this.runChecked(['config', '--local', 'user.email', email], 'git-identity-set-failed');

@@ -23,12 +23,20 @@ through `@openvcs/sdk/runtime` delegates and exposes a single VCS backend id:
   exact `vcs.*` JSON-RPC method names consumed by the runtime.
 - Status reads use `git status --porcelain=1 --branch -z -uall` so file paths are
   NUL-delimited and not C-quoted.
+- After porcelain parsing, the plugin cross-references `.gitmodules` paths so
+  tracked submodule entries are surfaced with a dedicated submodule status marker
+  for the client UI.
 - For rename and copy records, the porcelain format includes two NUL-terminated
   paths: the original/source path first, then the new/destination path. The
   plugin assigns `path` to the new path and `old_path` to the original path.
 - Network commands (`fetch`, `push`, `pull`) omit optional arguments (remote,
   refspec, branch) when not provided, allowing Git to use its defaults instead
   of receiving empty string arguments.
+- Clone uses `git clone --recurse-submodules` so repositories arrive with
+  submodules initialized by default.
+- The Repository menu submodule toolkit keeps pinned `git submodule update`
+  behavior separate from explicit `--remote` updates that follow the configured
+  branch in `.gitmodules`.
 
 ## State
 
@@ -38,7 +46,7 @@ The plugin stores lightweight runtime state:
 
 ## Manifest
 
-`openvcs.plugin.json` declares:
+`package.json.openvcs` declares:
 
 - `module.exec`: `openvcs-git-plugin.js`
 - `module.vcs_backends`: `git`
@@ -46,11 +54,11 @@ The plugin stores lightweight runtime state:
 
 ## Packaging
 
-The SDK packages this plugin into an `.ovcsp` bundle with:
+This plugin is published and consumed as an npm package with these runtime files:
 
 ```text
 openvcs.git/
-  openvcs.plugin.json
+  package.json
   bin/openvcs-git-plugin.js  (SDK-generated bootstrap, entry point)
   bin/plugin.js              (authored module with PluginDefinition + OnPluginStart)
   bin/plugin-helpers.js

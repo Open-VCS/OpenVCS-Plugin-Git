@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import type { PluginModuleDefinition } from '@openvcs/sdk/runtime';
+import { getOrCreateMenu, registerAction, invoke } from '@openvcs/sdk/runtime';
 
 import {
   GitVcsDelegates,
@@ -13,6 +14,8 @@ import {
   closeSession,
   requireSession,
 } from './plugin-runtime.js';
+
+import { registerSubmoduleToolkit } from './submodules.js';
 
 import { GitCommand } from './git.js';
 
@@ -54,4 +57,19 @@ export function OnPluginStart(): void {
 
   const delegates = new GitVcsDelegates(createGitRuntimeDependencies());
   PluginDefinition.vcs = delegates.toDelegates();
+
+  const repoMenu = getOrCreateMenu('repository', 'Repository', { surface: 'menubar' });
+  if (repoMenu) {
+    repoMenu.addItem({ label: 'Edit .gitignore', action: 'repo-edit-gitignore' });
+    repoMenu.addItem({ label: 'Edit .gitattributes', action: 'repo-edit-gitattributes' });
+  }
+
+  registerSubmoduleToolkit();
+
+  registerAction('repo-edit-gitignore', async () => {
+    await invoke('open_repo_dotfile', { name: '.gitignore' });
+  });
+  registerAction('repo-edit-gitattributes', async () => {
+    await invoke('open_repo_dotfile', { name: '.gitattributes' });
+  });
 }

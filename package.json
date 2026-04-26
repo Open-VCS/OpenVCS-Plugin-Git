@@ -3,28 +3,50 @@
   "version": "0.1.0",
   "description": "OpenVCS Git plugin - Node.js runtime",
   "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Open-VCS/OpenVCS-Plugin-Git",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Open-VCS/OpenVCS-Plugin-Git"
+  },
+  "bugs": {
+    "url": "https://github.com/Open-VCS/OpenVCS-Plugin-Git/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=18"
+  },
+  "openvcs": {
+    "id": "openvcs.git",
+    "name": "Git",
+    "version": "0.1.0",
+    "author": "OpenVCS Contributors",
+    "description": "Git VCS backend plugin for OpenVCS",
+    "default_enabled": true,
+    "module": {
+      "exec": "openvcs-git-plugin.js",
+      "vcs_backends": [
+        "git"
+      ]
+    }
   },
   "scripts": {
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
     "prepack": "npm run build",
     "build:plugin": "tsc -p tsconfig.json",
-    "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build",
-    "dist": "node ./node_modules/@openvcs/sdk/bin/openvcs.js dist --plugin-dir . --out dist"
+    "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build"
+  },
+  "dependencies": {
+    "@openvcs/sdk": "edge"
   },
   "devDependencies": {
-    "@openvcs/sdk": "^0.2",
     "@types/node": "^25.5.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.2"
   },
   "files": [
     "bin/",
     "src/",
-    "openvcs.plugin.json",
     "tsconfig.json",
     "README.md",
     "ARCHITECTURE.md",
