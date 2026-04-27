@@ -25,7 +25,16 @@
     "module": {
       "exec": "openvcs-git-plugin.js",
       "vcs_backends": [
-        "git"
+        {
+          "id": "git",
+          "name": "Git",
+          "action_labels": {
+            "VCS.Commit": "Commit",
+            "VCS.Fetch": "Fetch",
+            "VCS.Pull": "Pull",
+            "VCS.Push": "Push"
+          }
+        }
       ]
     }
   },

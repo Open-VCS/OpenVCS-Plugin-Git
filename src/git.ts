@@ -317,6 +317,12 @@ export class GitCommand {
     this.runChecked(['add', '-A', '--', ...paths], 'git-stage-paths-failed');
   }
 
+  /**
+   * Lists commits from Git with an optional cap.
+   *
+   * A non-positive limit skips the `-n` flag so callers can request the full
+   * history without hard-capping the result set.
+   */
   listCommits(options: ListCommitsOptions = {}): { commits: CommitEntry[]; exitCode: number } {
     const args = ['log', '--all'];
 
@@ -324,7 +330,7 @@ export class GitCommand {
       args.push('--topo-order');
     }
 
-    if (options.limit !== undefined) {
+    if (options.limit !== undefined && options.limit > 0) {
       args.push(`-${options.limit}`);
     }
 

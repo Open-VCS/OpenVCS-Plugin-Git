@@ -477,6 +477,21 @@ describe('Git commit parsing', () => {
   });
 
   describe('listCommits integration', () => {
+    it('omits the git log limit flag when requesting the full history', () => {
+      const git = new GitCommand('/tmp/mock-repo');
+      let capturedArgs: string[] = [];
+      git.run = ((args: string[]) => {
+        capturedArgs = args;
+        return { status: 0, stdout: '', stderr: '' };
+      }) as GitCommand['run'];
+
+      const result = git.listCommits({ limit: 0 });
+
+      assert.deepStrictEqual(result.commits, []);
+      assert.ok(!capturedArgs.includes('-0'));
+      assert.deepStrictEqual(capturedArgs.slice(0, 2), ['log', '--all']);
+    });
+
     it('populates commit id as the full hash and msg as the subject', () => {
       const repoPath = createTempRepo();
 
