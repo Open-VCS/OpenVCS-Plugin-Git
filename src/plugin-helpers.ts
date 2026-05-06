@@ -147,16 +147,16 @@ export function parseStatusOutput(output: string): StatusParseResult {
       index += 1;
     }
 
+    const conflicted =
+      x === 'U' ||
+      y === 'U' ||
+      (x === 'A' && y === 'A') ||
+      (x === 'D' && y === 'D');
     const staged = x !== ' ' && x !== '?';
 
     if (x === '?' || y === '?') {
       summary.untracked += 1;
-    } else if (
-      x === 'U' ||
-      y === 'U' ||
-      (x === 'A' && y === 'A') ||
-      (x === 'D' && y === 'D')
-    ) {
+    } else if (conflicted) {
       summary.conflicted += 1;
     } else {
       if (staged) {
@@ -171,7 +171,7 @@ export function parseStatusOutput(output: string): StatusParseResult {
     files.push({
       path,
       old_path: oldPath,
-      status: `${x}${y}`.trim() || 'M',
+      status: conflicted ? 'U' : `${x}${y}`.trim() || 'M',
       staged,
       resolved_conflict: false,
       hunks: [],

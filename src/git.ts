@@ -502,7 +502,12 @@ export class GitCommand {
   }
 
   diffFile(path: string): string {
-    return this.runChecked(['diff', '--no-ext-diff', '--', path], 'git-diff-failed').stdout;
+    const worktreeDiff = this.runChecked(['diff', '--no-ext-diff', '--', path], 'git-diff-failed')
+      .stdout;
+    if (worktreeDiff.trim().length > 0) return worktreeDiff;
+
+    return this.runChecked(['diff', '--cached', '--no-ext-diff', '--', path], 'git-diff-failed')
+      .stdout;
   }
 
   diffCommit(commit: string): string {

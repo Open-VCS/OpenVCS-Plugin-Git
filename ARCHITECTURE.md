@@ -29,6 +29,11 @@ through `@openvcs/sdk/runtime` delegates and exposes a single VCS backend id:
 - For rename and copy records, the porcelain format includes two NUL-terminated
   paths: the original/source path first, then the new/destination path. The
   plugin assigns `path` to the new path and `old_path` to the original path.
+- Unmerged porcelain states such as `UU`, `AA`, and `DD` are normalized to `U`
+  in status payloads so the client opens merge-conflict UI instead of a normal
+  diff view.
+- File diffs first read worktree changes and fall back to `git diff --cached`
+  for staged-only files so selected staged changes still render textual hunks.
 - Network commands (`fetch`, `push`, `pull`) omit optional arguments (remote,
   refspec, branch) when not provided, allowing Git to use its defaults instead
   of receiving empty string arguments.

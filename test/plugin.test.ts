@@ -104,6 +104,20 @@ describe('Git plugin helpers', () => {
         hunks: [],
       });
     });
+
+    it('normalizes unmerged porcelain states to conflict status', () => {
+      const status = parseStatusOutput('## main\0UU conflicted.txt\0');
+
+      assert.equal(status.summary.conflicted, 1);
+      assert.deepStrictEqual(status.payload.files[0], {
+        path: 'conflicted.txt',
+        old_path: null,
+        status: 'U',
+        staged: true,
+        resolved_conflict: false,
+        hunks: [],
+      });
+    });
   });
 
   describe('network command argument building', () => {
@@ -311,6 +325,22 @@ describe('Git commit integration', () => {
       const cachedDiff = runGit(repoPath, ['diff', '--cached', '--', 'tracked.txt']);
       assert.match(cachedDiff, /\+staged/);
       assert.match(cachedDiff, /\+unstaged/);
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it('shows staged-only file diffs', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const git = new GitCommand(repoPath);
+      writeFileSync(join(repoPath, 'tracked.txt'), 'staged only\n', 'utf8');
+      runGit(repoPath, ['add', 'tracked.txt']);
+
+      const patch = git.diffFile('tracked.txt');
+
+      assert.match(patch, /\+staged only/);
     } finally {
       rmSync(repoPath, { recursive: true, force: true });
     }
