@@ -34,6 +34,9 @@ through `@openvcs/sdk/runtime` delegates and exposes a single VCS backend id:
   diff view.
 - File diffs first read worktree changes and fall back to `git diff --cached`
   for staged-only files so selected staged changes still render textual hunks.
+- Commit history uses the current `HEAD` or requested revision instead of
+  `git log --all`, so internal refs such as `refs/stash` are not shown as normal
+  history entries.
 - Network commands (`fetch`, `push`, `pull`) omit optional arguments (remote,
   refspec, branch) when not provided, allowing Git to use its defaults instead
   of receiving empty string arguments.

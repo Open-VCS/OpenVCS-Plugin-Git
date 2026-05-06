@@ -519,7 +519,25 @@ describe('Git commit parsing', () => {
 
       assert.deepStrictEqual(result.commits, []);
       assert.ok(!capturedArgs.includes('-0'));
-      assert.deepStrictEqual(capturedArgs.slice(0, 2), ['log', '--all']);
+      assert.deepStrictEqual(capturedArgs[0], 'log');
+      assert.ok(!capturedArgs.includes('--all'));
+    });
+
+    it('excludes stash commits from default branch history', () => {
+      const repoPath = createTempRepo();
+
+      try {
+        const git = new GitCommand(repoPath);
+        writeFileSync(join(repoPath, 'tracked.txt'), 'stashed worktree\n', 'utf8');
+        runGit(repoPath, ['stash', 'push', '-m', 'GitHub_Desktop<Dev>']);
+
+        const result = git.listCommits({ limit: 10 });
+        const messages = result.commits.map((commit) => commit.msg);
+
+        assert.ok(!messages.some((message) => message.includes('GitHub_Desktop')));
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
     });
 
     it('populates commit id as the full hash and msg as the subject', () => {

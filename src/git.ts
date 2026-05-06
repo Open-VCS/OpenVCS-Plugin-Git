@@ -324,7 +324,7 @@ export class GitCommand {
    * history without hard-capping the result set.
    */
   listCommits(options: ListCommitsOptions = {}): { commits: CommitEntry[]; exitCode: number } {
-    const args = ['log', '--all'];
+    const args = ['log'];
 
     if (options.topo_order) {
       args.push('--topo-order');
