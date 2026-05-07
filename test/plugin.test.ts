@@ -118,6 +118,36 @@ describe('Git plugin helpers', () => {
         hunks: [],
       });
     });
+
+    it('marks branch_on_remote when the status header includes upstream tracking', () => {
+      const status = parseStatusOutput('## main...origin/main [ahead 1]\0');
+
+      assert.equal(status.payload.branch_on_remote, true);
+      assert.equal(status.payload.ahead, 1);
+      assert.equal(status.payload.behind, 0);
+    });
+
+    it('only marks branch_on_remote for the porcelain branch header form', () => {
+      const status = parseStatusOutput('## feature/branch...origin/feature/branch\0');
+
+      assert.equal(status.payload.branch_on_remote, true);
+    });
+
+    it('clears branch_on_remote when the status header has no upstream tracking', () => {
+      const status = parseStatusOutput('## main\0');
+
+      assert.equal(status.payload.branch_on_remote, false);
+      assert.equal(status.payload.ahead, 0);
+      assert.equal(status.payload.behind, 0);
+    });
+
+    it('keeps branch_on_remote false when ahead counts exist without an upstream marker', () => {
+      const status = parseStatusOutput('## main [ahead 1]\0');
+
+      assert.equal(status.payload.branch_on_remote, false);
+      assert.equal(status.payload.ahead, 1);
+      assert.equal(status.payload.behind, 0);
+    });
   });
 
   describe('network command argument building', () => {

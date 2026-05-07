@@ -9,8 +9,7 @@ jobs:
     if: github.event.pull_request.user.login == 'Jordonbc'
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
-      contents: write
+      contents: read
       pull-requests: write
       issues: write
 
@@ -27,18 +26,19 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.ZEN_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCODE_PERMISSION: '{"edit":"deny","write":"deny","patch":"deny"}'
         with:
           model: ${{ vars.OPENCODE_REVIEW_MODEL }}
           use_github_token: true
           prompt: |
             Before anything else, read and follow AGENTS.md for this repository and module.
+            You are reviewing this pull request only. Do not edit files, do not commit changes, and do not attempt to rewrite the PR.
+
             Review this pull request:
             - Check for code quality issues
             - Look for potential bugs
             - Suggest improvements
-            - If you make any code edits, run 'cd Git && npm test' to verify they compile and pass tests before committing.
-
-            The test command should only be run if the agent makes code edits.
+            - Keep your output limited to review findings and comments.
 
       - name: fallback
         if: ${{ steps.review_primary.outcome == 'failure' }}
@@ -47,15 +47,16 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.ZEN_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCODE_PERMISSION: '{"edit":"deny","write":"deny","patch":"deny"}'
         with:
           model: ${{ vars.OPENCODE_REVIEW_MODEL_FALLBACK }}
           use_github_token: true
           prompt: |
             Before anything else, read and follow AGENTS.md for this repository and module.
+            You are reviewing this pull request only. Do not edit files, do not commit changes, and do not attempt to rewrite the PR.
+
             Review this pull request:
             - Check for code quality issues
             - Look for potential bugs
             - Suggest improvements
-            - If you make any code edits, run 'cd Git && npm test' to verify they compile and pass tests before committing.
-
-            The test command should only be run if the agent makes code edits.
+            - Keep your output limited to review findings and comments.

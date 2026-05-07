@@ -111,6 +111,7 @@ export function parseStatusOutput(output: string): StatusParseResult {
   const records = output.split('\0').filter(Boolean);
   let ahead = 0;
   let behind = 0;
+  let branchOnRemote = false;
   const files: StatusFileEntry[] = [];
   const summary: StatusSummary = {
     untracked: 0,
@@ -127,6 +128,8 @@ export function parseStatusOutput(output: string): StatusParseResult {
       const behindMatch = record.match(/behind\s+(\d+)/);
       ahead = aheadMatch ? Number(aheadMatch[1]) : 0;
       behind = behindMatch ? Number(behindMatch[1]) : 0;
+      const trackingMatch = record.match(/^## [^ ]+\.\.\.\S+/);
+      branchOnRemote = !!trackingMatch;
       continue;
     }
 
@@ -184,6 +187,7 @@ export function parseStatusOutput(output: string): StatusParseResult {
       files,
       ahead,
       behind,
+      branch_on_remote: branchOnRemote,
     },
   };
 }
