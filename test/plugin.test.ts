@@ -140,6 +140,14 @@ describe('Git plugin helpers', () => {
       assert.equal(status.payload.ahead, 0);
       assert.equal(status.payload.behind, 0);
     });
+
+    it('keeps branch_on_remote false when ahead counts exist without an upstream marker', () => {
+      const status = parseStatusOutput('## main [ahead 1]\0');
+
+      assert.equal(status.payload.branch_on_remote, false);
+      assert.equal(status.payload.ahead, 1);
+      assert.equal(status.payload.behind, 0);
+    });
   });
 
   describe('network command argument building', () => {
