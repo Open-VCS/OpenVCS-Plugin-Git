@@ -151,6 +151,14 @@ export class GitCommand {
   status(): StatusParseResult & { exitCode: number } {
     const result = this.run(['status', '--porcelain=1', '--branch', '-z', '-uall']);
     const parsed = applySubmoduleStatusHints(parseStatusOutput(result.stdout), this.listSubmodulePaths());
+    const branch = this.currentBranch();
+    if (branch && branch !== 'HEAD') {
+      const remoteRef = `refs/remotes/origin/${branch}`;
+      const remoteBranchPresent = this.run(['rev-parse', '--verify', '-q', remoteRef]).status === 0;
+      if (remoteBranchPresent) {
+        parsed.payload.branch_on_remote = true;
+      }
+    }
     return { ...parsed, exitCode: result.status };
   }
 
