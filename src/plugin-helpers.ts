@@ -128,7 +128,7 @@ export function parseStatusOutput(output: string): StatusParseResult {
       const behindMatch = record.match(/behind\s+(\d+)/);
       ahead = aheadMatch ? Number(aheadMatch[1]) : 0;
       behind = behindMatch ? Number(behindMatch[1]) : 0;
-      const trackingMatch = record.match(/\.\.\.[^\s]+/);
+      const trackingMatch = record.match(/^## .+\.\.\.\S+/);
       branchOnRemote = !!trackingMatch;
       continue;
     }

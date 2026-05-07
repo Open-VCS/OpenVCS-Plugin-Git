@@ -127,6 +127,12 @@ describe('Git plugin helpers', () => {
       assert.equal(status.payload.behind, 0);
     });
 
+    it('only marks branch_on_remote for the porcelain branch header form', () => {
+      const status = parseStatusOutput('## feature/branch...origin/feature/branch\0');
+
+      assert.equal(status.payload.branch_on_remote, true);
+    });
+
     it('clears branch_on_remote when the status header has no upstream tracking', () => {
       const status = parseStatusOutput('## main\0');
 
