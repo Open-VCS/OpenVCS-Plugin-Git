@@ -40,6 +40,21 @@ jobs:
             - Suggest improvements
             - Keep your output limited to review findings and comments.
 
+            Output requirements:
+            - Start with review findings, not process narration
+            - Do not describe which files you read or how you investigated
+            - Every comment must be either a concrete finding or an explicit no-issues verdict
+            - If you found no blocking or important issues, say exactly that and stop
+
+            For every finding:
+            - Cite the specific file and changed line/range when possible
+            - Explain why it is a real issue
+            - Explain the likely impact
+            - Suggest the smallest reasonable fix
+            - State confidence as High, Medium, or Low
+
+            If there are no substantive issues, say that no blocking or important issues were found. Do not invent issues to appear useful. Do not mention the review process, file reads, or search steps in the final output.
+
       - name: fallback
         if: ${{ steps.review_primary.outcome == 'failure' }}
         uses: anomalyco/opencode/github@2410593023d2c61f05123c9b0faf189a28dfbeee
@@ -60,3 +75,18 @@ jobs:
             - Look for potential bugs
             - Suggest improvements
             - Keep your output limited to review findings and comments.
+
+            Output requirements:
+            - Start with review findings, not process narration
+            - Do not describe which files you read or how you investigated
+            - Every comment must be either a concrete finding or an explicit no-issues verdict
+            - If you found no blocking or important issues, say exactly that and stop
+
+            For every finding:
+            - Cite the specific file and changed line/range when possible
+            - Explain why it is a real issue
+            - Explain the likely impact
+            - Suggest the smallest reasonable fix
+            - State confidence as High, Medium, or Low
+
+            If there are no substantive issues, say that no blocking or important issues were found. Do not invent issues to appear useful. Do not mention the review process, file reads, or search steps in the final output.
