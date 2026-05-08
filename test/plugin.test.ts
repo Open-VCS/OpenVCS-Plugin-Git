@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it } from 'node:test';
 
+import type { PluginRuntimeContext } from '@openvcs/sdk/runtime';
+
 import {
   applySubmoduleStatusHints,
   buildCloneArgs,
@@ -62,6 +64,15 @@ function createMockDelegate(mockGit: Partial<GitCommand>) {
     requireSession: () => ({ path: '/tmp/mock-repo' }),
     createGitCommand: () => mockGit as GitCommand,
   });
+}
+
+/** Creates a minimal runtime context for direct delegate invocation. */
+function createRuntimeContext(): PluginRuntimeContext {
+  return {
+    host: {} as PluginRuntimeContext['host'],
+    requestId: '1',
+    method: 'vcs.create_branch',
+  };
 }
 
 describe('Git plugin helpers', () => {
@@ -321,6 +332,25 @@ describe('Git plugin exports', () => {
       assert.ok(vcs['vcs.get_status_summary'], 'vcs.get_status_summary delegate exists');
       assert.ok(vcs['vcs.get_status_payload'], 'vcs.get_status_payload delegate exists');
       assert.ok(vcs['vcs.list_commits'], 'vcs.list_commits delegate exists');
+    });
+
+    it('checks out the branch when create_branch receives checkout=true', () => {
+      const calls: string[] = [];
+      const delegates = createMockDelegate({
+        createBranch: (name: string) => {
+          calls.push(`create:${name}`);
+        },
+        checkoutBranch: (name: string) => {
+          calls.push(`checkout:${name}`);
+        },
+      });
+
+      delegates.createBranch(
+        { session_id: 'session-1', name: 'feature/test', checkout: true },
+        createRuntimeContext(),
+      );
+
+      assert.deepStrictEqual(calls, ['create:feature/test', 'checkout:feature/test']);
     });
   });
 

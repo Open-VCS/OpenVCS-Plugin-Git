@@ -261,7 +261,15 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    git.createBranch(asTrimmedString(params.name));
+    const name = asTrimmedString(params.name);
+    const checkout = params.checkout === true;
+
+    if (checkout) {
+      git.createBranch(name);
+      git.checkoutBranch(name);
+    } else {
+      git.createBranch(name);
+    }
     return null;
   }
 
