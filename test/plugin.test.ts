@@ -545,6 +545,25 @@ describe('Git commit integration', () => {
       rmSync(repoPath, { recursive: true, force: true });
     }
   });
+
+  it('commits staged untracked files through the index', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const git = new GitCommand(repoPath);
+      writeFileSync(join(repoPath, 'content/posts/2026/05/openvcs-announcement.md'), 'hello\n', 'utf8');
+
+      git.stagePaths(['content/posts/2026/05/openvcs-announcement.md']);
+      git.commitIndex('new file commit', 'New File User', 'newfile@example.com');
+
+      assert.strictEqual(
+        runGit(repoPath, ['show', 'HEAD:content/posts/2026/05/openvcs-announcement.md']),
+        'hello',
+      );
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Git commit parsing', () => {
