@@ -368,6 +368,25 @@ describe('Git plugin exports', () => {
 });
 
 describe('Git commit integration', () => {
+  it('returns an empty diff array when stdout is empty', () => {
+    const delegates = createMockDelegate({
+      diffFile: () => '',
+      diffCommit: () => '',
+    });
+
+    const fileDiff = delegates.diffFile(
+      { session_id: 'session-1', path: 'tracked.txt' } as never,
+      createRuntimeContext(),
+    );
+    const commitDiff = delegates.diffCommit(
+      { session_id: 'session-1', rev: 'HEAD' } as never,
+      createRuntimeContext(),
+    );
+
+    assert.deepStrictEqual(fileDiff, []);
+    assert.deepStrictEqual(commitDiff, []);
+  });
+
   it('stages partial patches against the current index', () => {
     const repoPath = createTempRepo();
 
