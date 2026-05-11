@@ -46,7 +46,7 @@
     "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build"
   },
   "dependencies": {
-    "@openvcs/sdk": "^0.3.0-edge.20260506.51"
+    "@openvcs/sdk": "edge"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
