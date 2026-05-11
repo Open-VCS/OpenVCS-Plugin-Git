@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it } from 'node:test';
@@ -554,6 +554,7 @@ describe('Git commit integration', () => {
 
     try {
       const git = new GitCommand(repoPath);
+      mkdirSync(join(repoPath, 'content/posts/2026/05'), { recursive: true });
       writeFileSync(join(repoPath, 'content/posts/2026/05/openvcs-announcement.md'), 'hello\n', 'utf8');
 
       git.stagePaths(['content/posts/2026/05/openvcs-announcement.md']);
