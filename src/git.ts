@@ -17,7 +17,7 @@ import {
   applySubmoduleStatusHints,
   asString,
   buildFetchArgs,
-  buildPullFfOnlyArgs,
+  buildPullArgs,
   buildPushArgs,
   buildSubmoduleUpdateArgs,
   parseCommits,
@@ -270,7 +270,7 @@ export class GitCommand {
   }
 
   pull(options: PullOptions = {}): GitCommandResult {
-    const args = buildPullFfOnlyArgs(options as unknown as Record<string, unknown>);
+    const args = buildPullArgs(options as unknown as Record<string, unknown>);
     return this.runChecked(args, 'git-pull-failed');
   }
 

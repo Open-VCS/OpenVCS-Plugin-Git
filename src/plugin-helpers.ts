@@ -82,9 +82,9 @@ export function buildCloneArgs(params: RequestParams): string[] {
   return args;
 }
 
-/** Builds `git pull --ff-only` arguments while omitting empty optional values. */
-export function buildPullFfOnlyArgs(params: RequestParams): string[] {
-  const args = ['pull', '--ff-only'];
+/** Builds `git pull --no-rebase --no-edit` arguments while omitting empty optional values. */
+export function buildPullArgs(params: RequestParams): string[] {
+  const args = ['pull', '--no-rebase', '--no-edit'];
   pushOptionalArg(args, params.remote);
   pushOptionalArg(args, params.branch);
   return args;

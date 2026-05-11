@@ -14,7 +14,7 @@ import {
   applySubmoduleStatusHints,
   buildCloneArgs,
   buildFetchArgs,
-  buildPullFfOnlyArgs,
+  buildPullArgs,
   buildPushArgs,
   buildSubmoduleUpdateArgs,
   parseCommits,
@@ -200,15 +200,18 @@ describe('Git plugin helpers', () => {
       assert.deepStrictEqual(buildPushArgs({}), ['push']);
     });
 
-    it('builds pull --ff-only with no optional arguments', () => {
-      assert.deepStrictEqual(buildPullFfOnlyArgs({}), ['pull', '--ff-only']);
+    it('builds pull merge with no optional arguments', () => {
+      assert.deepStrictEqual(buildPullArgs({}), ['pull', '--no-rebase', '--no-edit']);
     });
 
-    it('builds pull --ff-only with remote and branch', () => {
-      assert.deepStrictEqual(
-        buildPullFfOnlyArgs({ remote: 'origin', branch: 'main' }),
-        ['pull', '--ff-only', 'origin', 'main'],
-      );
+    it('builds pull merge with remote and branch', () => {
+      assert.deepStrictEqual(buildPullArgs({ remote: 'origin', branch: 'main' }), [
+        'pull',
+        '--no-rebase',
+        '--no-edit',
+        'origin',
+        'main',
+      ]);
     });
 
     it('builds submodule update for one path', () => {
