@@ -3,16 +3,18 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it } from 'node:test';
+
+import type { PluginRuntimeContext } from '@openvcs/sdk/runtime';
 
 import {
   applySubmoduleStatusHints,
   buildCloneArgs,
   buildFetchArgs,
-  buildPullFfOnlyArgs,
+  buildPullArgs,
   buildPushArgs,
   buildSubmoduleUpdateArgs,
   parseCommits,
@@ -64,6 +66,15 @@ function createMockDelegate(mockGit: Partial<GitCommand>) {
   });
 }
 
+/** Creates a minimal runtime context for direct delegate invocation. */
+function createRuntimeContext(): PluginRuntimeContext {
+  return {
+    host: {} as PluginRuntimeContext['host'],
+    requestId: '1',
+    method: 'vcs.create_branch',
+  };
+}
+
 describe('Git plugin helpers', () => {
   describe('parseStatusOutput', () => {
     it('assigns old_path and path for staged rename records', () => {
@@ -103,6 +114,50 @@ describe('Git plugin helpers', () => {
         resolved_conflict: false,
         hunks: [],
       });
+    });
+
+    it('normalizes unmerged porcelain states to conflict status', () => {
+      const status = parseStatusOutput('## main\0UU conflicted.txt\0');
+
+      assert.equal(status.summary.conflicted, 1);
+      assert.deepStrictEqual(status.payload.files[0], {
+        path: 'conflicted.txt',
+        old_path: null,
+        status: 'U',
+        staged: true,
+        resolved_conflict: false,
+        hunks: [],
+      });
+    });
+
+    it('marks branch_on_remote when the status header includes upstream tracking', () => {
+      const status = parseStatusOutput('## main...origin/main [ahead 1]\0');
+
+      assert.equal(status.payload.branch_on_remote, true);
+      assert.equal(status.payload.ahead, 1);
+      assert.equal(status.payload.behind, 0);
+    });
+
+    it('only marks branch_on_remote for the porcelain branch header form', () => {
+      const status = parseStatusOutput('## feature/branch...origin/feature/branch\0');
+
+      assert.equal(status.payload.branch_on_remote, true);
+    });
+
+    it('clears branch_on_remote when the status header has no upstream tracking', () => {
+      const status = parseStatusOutput('## main\0');
+
+      assert.equal(status.payload.branch_on_remote, false);
+      assert.equal(status.payload.ahead, 0);
+      assert.equal(status.payload.behind, 0);
+    });
+
+    it('keeps branch_on_remote false when ahead counts exist without an upstream marker', () => {
+      const status = parseStatusOutput('## main [ahead 1]\0');
+
+      assert.equal(status.payload.branch_on_remote, false);
+      assert.equal(status.payload.ahead, 1);
+      assert.equal(status.payload.behind, 0);
     });
   });
 
@@ -145,15 +200,18 @@ describe('Git plugin helpers', () => {
       assert.deepStrictEqual(buildPushArgs({}), ['push']);
     });
 
-    it('builds pull --ff-only with no optional arguments', () => {
-      assert.deepStrictEqual(buildPullFfOnlyArgs({}), ['pull', '--ff-only']);
+    it('builds pull merge with no optional arguments', () => {
+      assert.deepStrictEqual(buildPullArgs({}), ['pull', '--no-rebase', '--no-edit']);
     });
 
-    it('builds pull --ff-only with remote and branch', () => {
-      assert.deepStrictEqual(
-        buildPullFfOnlyArgs({ remote: 'origin', branch: 'main' }),
-        ['pull', '--ff-only', 'origin', 'main'],
-      );
+    it('builds pull merge with remote and branch', () => {
+      assert.deepStrictEqual(buildPullArgs({ remote: 'origin', branch: 'main' }), [
+        'pull',
+        '--no-rebase',
+        '--no-edit',
+        'origin',
+        'main',
+      ]);
     });
 
     it('builds submodule update for one path', () => {
@@ -278,6 +336,25 @@ describe('Git plugin exports', () => {
       assert.ok(vcs['vcs.get_status_payload'], 'vcs.get_status_payload delegate exists');
       assert.ok(vcs['vcs.list_commits'], 'vcs.list_commits delegate exists');
     });
+
+    it('checks out the branch when create_branch receives checkout=true', () => {
+      const calls: string[] = [];
+      const delegates = createMockDelegate({
+        createBranch: (name: string) => {
+          calls.push(`create:${name}`);
+        },
+        checkoutBranch: (name: string) => {
+          calls.push(`checkout:${name}`);
+        },
+      });
+
+      delegates.createBranch(
+        { session_id: 'session-1', name: 'feature/test', checkout: true },
+        createRuntimeContext(),
+      );
+
+      assert.deepStrictEqual(calls, ['create:feature/test', 'checkout:feature/test']);
+    });
   });
 
   describe('OnPluginStart', () => {
@@ -294,6 +371,25 @@ describe('Git plugin exports', () => {
 });
 
 describe('Git commit integration', () => {
+  it('returns an empty diff array when stdout is empty', () => {
+    const delegates = createMockDelegate({
+      diffFile: () => '',
+      diffCommit: () => '',
+    });
+
+    const fileDiff = delegates.diffFile(
+      { session_id: 'session-1', path: 'tracked.txt' } as never,
+      createRuntimeContext(),
+    );
+    const commitDiff = delegates.diffCommit(
+      { session_id: 'session-1', rev: 'HEAD' } as never,
+      createRuntimeContext(),
+    );
+
+    assert.deepStrictEqual(fileDiff, []);
+    assert.deepStrictEqual(commitDiff, []);
+  });
+
   it('stages partial patches against the current index', () => {
     const repoPath = createTempRepo();
 
@@ -311,6 +407,22 @@ describe('Git commit integration', () => {
       const cachedDiff = runGit(repoPath, ['diff', '--cached', '--', 'tracked.txt']);
       assert.match(cachedDiff, /\+staged/);
       assert.match(cachedDiff, /\+unstaged/);
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it('shows staged-only file diffs', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const git = new GitCommand(repoPath);
+      writeFileSync(join(repoPath, 'tracked.txt'), 'staged only\n', 'utf8');
+      runGit(repoPath, ['add', 'tracked.txt']);
+
+      const patch = git.diffFile('tracked.txt');
+
+      assert.match(patch, /\+staged only/);
     } finally {
       rmSync(repoPath, { recursive: true, force: true });
     }
@@ -436,6 +548,26 @@ describe('Git commit integration', () => {
       rmSync(repoPath, { recursive: true, force: true });
     }
   });
+
+  it('commits staged untracked files through the index', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const git = new GitCommand(repoPath);
+      mkdirSync(join(repoPath, 'content/posts/2026/05'), { recursive: true });
+      writeFileSync(join(repoPath, 'content/posts/2026/05/openvcs-announcement.md'), 'hello\n', 'utf8');
+
+      git.stagePaths(['content/posts/2026/05/openvcs-announcement.md']);
+      git.commitIndex('new file commit', 'New File User', 'newfile@example.com');
+
+      assert.strictEqual(
+        runGit(repoPath, ['show', 'HEAD:content/posts/2026/05/openvcs-announcement.md']),
+        'hello',
+      );
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Git commit parsing', () => {
@@ -477,6 +609,39 @@ describe('Git commit parsing', () => {
   });
 
   describe('listCommits integration', () => {
+    it('omits the git log limit flag when requesting the full history', () => {
+      const git = new GitCommand('/tmp/mock-repo');
+      let capturedArgs: string[] = [];
+      git.run = ((args: string[]) => {
+        capturedArgs = args;
+        return { status: 0, stdout: '', stderr: '' };
+      }) as GitCommand['run'];
+
+      const result = git.listCommits({ limit: 0 });
+
+      assert.deepStrictEqual(result.commits, []);
+      assert.ok(!capturedArgs.includes('-0'));
+      assert.deepStrictEqual(capturedArgs[0], 'log');
+      assert.ok(!capturedArgs.includes('--all'));
+    });
+
+    it('excludes stash commits from default branch history', () => {
+      const repoPath = createTempRepo();
+
+      try {
+        const git = new GitCommand(repoPath);
+        writeFileSync(join(repoPath, 'tracked.txt'), 'stashed worktree\n', 'utf8');
+        runGit(repoPath, ['stash', 'push', '-m', 'GitHub_Desktop<Dev>']);
+
+        const result = git.listCommits({ limit: 10 });
+        const messages = result.commits.map((commit) => commit.msg);
+
+        assert.ok(!messages.some((message) => message.includes('GitHub_Desktop')));
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+
     it('populates commit id as the full hash and msg as the subject', () => {
       const repoPath = createTempRepo();
 

@@ -82,9 +82,9 @@ export function buildCloneArgs(params: RequestParams): string[] {
   return args;
 }
 
-/** Builds `git pull --ff-only` arguments while omitting empty optional values. */
-export function buildPullFfOnlyArgs(params: RequestParams): string[] {
-  const args = ['pull', '--ff-only'];
+/** Builds `git pull --no-rebase --no-edit` arguments while omitting empty optional values. */
+export function buildPullArgs(params: RequestParams): string[] {
+  const args = ['pull', '--no-rebase', '--no-edit'];
   pushOptionalArg(args, params.remote);
   pushOptionalArg(args, params.branch);
   return args;
@@ -111,6 +111,7 @@ export function parseStatusOutput(output: string): StatusParseResult {
   const records = output.split('\0').filter(Boolean);
   let ahead = 0;
   let behind = 0;
+  let branchOnRemote = false;
   const files: StatusFileEntry[] = [];
   const summary: StatusSummary = {
     untracked: 0,
@@ -127,6 +128,8 @@ export function parseStatusOutput(output: string): StatusParseResult {
       const behindMatch = record.match(/behind\s+(\d+)/);
       ahead = aheadMatch ? Number(aheadMatch[1]) : 0;
       behind = behindMatch ? Number(behindMatch[1]) : 0;
+      const trackingMatch = record.match(/^## [^ ]+\.\.\.\S+/);
+      branchOnRemote = !!trackingMatch;
       continue;
     }
 
@@ -147,16 +150,16 @@ export function parseStatusOutput(output: string): StatusParseResult {
       index += 1;
     }
 
+    const conflicted =
+      x === 'U' ||
+      y === 'U' ||
+      (x === 'A' && y === 'A') ||
+      (x === 'D' && y === 'D');
     const staged = x !== ' ' && x !== '?';
 
     if (x === '?' || y === '?') {
       summary.untracked += 1;
-    } else if (
-      x === 'U' ||
-      y === 'U' ||
-      (x === 'A' && y === 'A') ||
-      (x === 'D' && y === 'D')
-    ) {
+    } else if (conflicted) {
       summary.conflicted += 1;
     } else {
       if (staged) {
@@ -171,7 +174,7 @@ export function parseStatusOutput(output: string): StatusParseResult {
     files.push({
       path,
       old_path: oldPath,
-      status: `${x}${y}`.trim() || 'M',
+      status: conflicted ? 'U' : `${x}${y}`.trim() || 'M',
       staged,
       resolved_conflict: false,
       hunks: [],
@@ -184,6 +187,7 @@ export function parseStatusOutput(output: string): StatusParseResult {
       files,
       ahead,
       behind,
+      branch_on_remote: branchOnRemote,
     },
   };
 }

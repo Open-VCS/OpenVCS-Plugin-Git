@@ -1,6 +1,6 @@
 {
   "name": "@openvcs/git-plugin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "OpenVCS Git plugin - Node.js runtime",
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/Open-VCS/OpenVCS-Plugin-Git",
@@ -18,14 +18,23 @@
   "openvcs": {
     "id": "openvcs.git",
     "name": "Git",
-    "version": "0.1.0",
+    "version": "0.3.0",
     "author": "OpenVCS Contributors",
     "description": "Git VCS backend plugin for OpenVCS",
     "default_enabled": true,
     "module": {
       "exec": "openvcs-git-plugin.js",
       "vcs_backends": [
-        "git"
+        {
+          "id": "git",
+          "name": "Git",
+          "action_labels": {
+            "VCS.Commit": "Commit",
+            "VCS.Fetch": "Fetch",
+            "VCS.Pull": "Pull",
+            "VCS.Push": "Push"
+          }
+        }
       ]
     }
   },
@@ -37,7 +46,7 @@
     "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build"
   },
   "dependencies": {
-    "@openvcs/sdk": "edge"
+    "@openvcs/sdk": "^0.3.0-edge.20260506.51"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

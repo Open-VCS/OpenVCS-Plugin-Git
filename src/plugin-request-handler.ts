@@ -35,6 +35,12 @@ function asOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+/** Splits Git diff stdout into lines without manufacturing a blank entry for empty output. */
+function splitDiffLines(output: string): string[] {
+  const normalized = output.trimEnd();
+  return normalized.length > 0 ? normalized.split('\n') : [];
+}
+
 /** Reduces a file status string to the primary status code needed for discard routing. */
 function getPrimaryDiscardStatus(status: string): string {
   const normalized = asTrimmedString(status);
@@ -261,7 +267,15 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    git.createBranch(asTrimmedString(params.name));
+    const name = asTrimmedString(params.name);
+    const checkout = params.checkout === true;
+
+    if (checkout) {
+      git.createBranch(name);
+      git.checkoutBranch(name);
+    } else {
+      git.createBranch(name);
+    }
     return null;
   }
 
@@ -416,7 +430,7 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): string[] {
     const git = this.requireGit(params.session_id);
-    return git.diffFile(asTrimmedString(params.path)).split('\n');
+    return splitDiffLines(git.diffFile(asTrimmedString(params.path)));
   }
 
   override diffCommit(
@@ -424,7 +438,7 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): string[] {
     const git = this.requireGit(params.session_id);
-    return git.diffCommit(asTrimmedString(params.rev)).split('\n');
+    return splitDiffLines(git.diffCommit(asTrimmedString(params.rev)));
   }
 
   override getConflictDetails(
