@@ -17,7 +17,7 @@ import {
   applySubmoduleStatusHints,
   asString,
   buildFetchArgs,
-  buildPullFfOnlyArgs,
+  buildPullArgs,
   buildPushArgs,
   buildSubmoduleUpdateArgs,
   parseCommits,
@@ -270,7 +270,7 @@ export class GitCommand {
   }
 
   pull(options: PullOptions = {}): GitCommandResult {
-    const args = buildPullFfOnlyArgs(options as unknown as Record<string, unknown>);
+    const args = buildPullArgs(options as unknown as Record<string, unknown>);
     return this.runChecked(args, 'git-pull-failed');
   }
 
@@ -317,14 +317,20 @@ export class GitCommand {
     this.runChecked(['add', '-A', '--', ...paths], 'git-stage-paths-failed');
   }
 
+  /**
+   * Lists commits from Git with an optional cap.
+   *
+   * A non-positive limit skips the `-n` flag so callers can request the full
+   * history without hard-capping the result set.
+   */
   listCommits(options: ListCommitsOptions = {}): { commits: CommitEntry[]; exitCode: number } {
-    const args = ['log', '--all'];
+    const args = ['log'];
 
     if (options.topo_order) {
       args.push('--topo-order');
     }
 
-    if (options.limit !== undefined) {
+    if (options.limit !== undefined && options.limit > 0) {
       args.push(`-${options.limit}`);
     }
 
@@ -496,7 +502,12 @@ export class GitCommand {
   }
 
   diffFile(path: string): string {
-    return this.runChecked(['diff', '--no-ext-diff', '--', path], 'git-diff-failed').stdout;
+    const worktreeDiff = this.runChecked(['diff', '--no-ext-diff', '--', path], 'git-diff-failed')
+      .stdout;
+    if (worktreeDiff.trim().length > 0) return worktreeDiff;
+
+    return this.runChecked(['diff', '--cached', '--no-ext-diff', '--', path], 'git-diff-failed')
+      .stdout;
   }
 
   diffCommit(commit: string): string {

@@ -61,12 +61,12 @@ npm pack
 
 ## Release Channels
 
-The npm package can be consumed from prerelease channels published by CI:
+CI publishes prereleases with these dist-tags:
 
-- `latest`: stable releases
+- `latest`: stable releases from `Stable`
 - `beta`: builds from the `Beta` branch
+- `nightly`: scheduled builds from `Dev` when changes exist since the last nightly
 - `edge`: working builds from `Dev` push commits
-- `nightly`: scheduled builds from `Dev` when there are changes since the last nightly
 
 Examples:
 
