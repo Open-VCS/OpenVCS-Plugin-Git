@@ -364,9 +364,9 @@ export class GitCommand {
       args.push('--', options.path);
     }
 
-    const result = this.run(args);
+    const result = this.runChecked(args, 'git-log-failed');
     const commits = parseCommits(result.stdout);
-    return { commits, exitCode: result.status };
+    return { commits, exitCode: 0 };
   }
 
   /** Reads `.gitmodules` entries indexed by submodule name and path. */

@@ -625,6 +625,15 @@ describe('Git commit parsing', () => {
       assert.ok(!capturedArgs.includes('--all'));
     });
 
+    it('propagates git log failures', () => {
+      const git = new GitCommand('/tmp/mock-repo');
+      git.runChecked = (() => {
+        throw new Error('git log failed');
+      }) as GitCommand['runChecked'];
+
+      assert.throws(() => git.listCommits({}), /git log failed/);
+    });
+
     it('excludes stash commits from default branch history', () => {
       const repoPath = createTempRepo();
 
