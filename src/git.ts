@@ -511,8 +511,14 @@ export class GitCommand {
 
   diffCommit(commit: string): string {
     const parentCheck = this.run(['rev-parse', '--verify', `${commit}^`]);
-    const parent = parentCheck.status === 0 ? `${commit}^` : '4b825dc642cb6eb9a060e54bf899d1541f8d2d2a';
-    return this.runChecked(['diff', parent, commit], 'git-diff-failed').stdout;
+    if (parentCheck.status === 0) {
+      return this.runChecked(['diff', `${commit}^`, commit], 'git-diff-failed').stdout;
+    }
+
+    return this.runChecked(
+      ['diff-tree', '--root', '--no-commit-id', '--no-ext-diff', '-p', commit],
+      'git-diff-failed',
+    ).stdout;
   }
 
   getConflictDetails(path: string): ConflictDetails {
@@ -557,6 +563,59 @@ export class GitCommand {
 
   /** Stages a textual patch into the index without requiring worktree/index parity. */
   stagePatch(patch: string): void {
+    const lines = patch.split('\n');
+    const retained: Array<{ path: string; text: string[] }> = [];
+    let current: string[] = [];
+    let currentPath: string | null = null;
+    let unparseable = false;
+
+    const flush = (): void => {
+      if (current.length === 0) {
+        return;
+      }
+
+      if (!currentPath) {
+        unparseable = true;
+        return;
+      }
+
+      retained.push({ path: currentPath, text: current });
+    };
+
+    for (const line of lines) {
+      if (line.startsWith('diff --git ')) {
+        flush();
+        current = [line];
+        const marker = line.indexOf(' b/');
+        currentPath = marker >= 0 ? line.slice(marker + 3) : null;
+        continue;
+      }
+
+      if (current.length > 0) {
+        current.push(line);
+      }
+    }
+
+    flush();
+
+    if (retained.length > 1 && !unparseable) {
+      const seen = new Set<string>();
+      const filtered: string[][] = [];
+
+      for (let index = retained.length - 1; index >= 0; index -= 1) {
+        const section = retained[index];
+        if (seen.has(section.path)) {
+          continue;
+        }
+
+        seen.add(section.path);
+        filtered.push(section.text);
+      }
+
+      filtered.reverse();
+      patch = filtered.map((section) => section.join('\n')).join('\n');
+    }
+
     this.runChecked(['apply', '--cached', '--unidiff-zero'], 'git-stage-patch-failed', {
       stdin: patch,
     });
