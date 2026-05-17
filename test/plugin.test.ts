@@ -400,6 +400,7 @@ describe('Git commit integration', () => {
       writeFileSync(join(repoPath, 'tracked.txt'), 'staged\nunstaged\n', 'utf8');
 
       const patch = git.diffFile('tracked.txt');
+      assert.match(patch, /\+staged/);
       assert.match(patch, /\+unstaged/);
 
       git.stagePatch(patch);
@@ -625,6 +626,15 @@ describe('Git commit parsing', () => {
       assert.ok(!capturedArgs.includes('--all'));
     });
 
+    it('propagates git log failures', () => {
+      const git = new GitCommand('/tmp/mock-repo');
+      git.runChecked = (() => {
+        throw new Error('git log failed');
+      }) as GitCommand['runChecked'];
+
+      assert.throws(() => git.listCommits({}), /git log failed/);
+    });
+
     it('excludes stash commits from default branch history', () => {
       const repoPath = createTempRepo();
 
@@ -688,6 +698,21 @@ describe('Git commit parsing', () => {
           const diff = git.diffCommit(nonInitialCommits[0].id);
           assert.ok(diff.length > 0);
         }
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+
+    it('diffs the root commit against the empty tree', () => {
+      const repoPath = createTempRepo();
+
+      try {
+        const git = new GitCommand(repoPath);
+        const result = git.listCommits({ limit: 1 });
+        const root = result.commits[0];
+
+        const diff = git.diffCommit(root.id);
+        assert.match(diff, /\+base/);
       } finally {
         rmSync(repoPath, { recursive: true, force: true });
       }

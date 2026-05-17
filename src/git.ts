@@ -364,9 +364,9 @@ export class GitCommand {
       args.push('--', options.path);
     }
 
-    const result = this.run(args);
+    const result = this.runChecked(args, 'git-log-failed');
     const commits = parseCommits(result.stdout);
-    return { commits, exitCode: result.status };
+    return { commits, exitCode: 0 };
   }
 
   /** Reads `.gitmodules` entries indexed by submodule name and path. */
@@ -502,16 +502,23 @@ export class GitCommand {
   }
 
   diffFile(path: string): string {
+    const cachedDiff = this.runChecked(['diff', '--cached', '--no-ext-diff', '--', path], 'git-diff-failed')
+      .stdout;
     const worktreeDiff = this.runChecked(['diff', '--no-ext-diff', '--', path], 'git-diff-failed')
       .stdout;
-    if (worktreeDiff.trim().length > 0) return worktreeDiff;
-
-    return this.runChecked(['diff', '--cached', '--no-ext-diff', '--', path], 'git-diff-failed')
-      .stdout;
+    return cachedDiff + worktreeDiff;
   }
 
   diffCommit(commit: string): string {
-    return this.runChecked(['diff', `${commit}^`, commit], 'git-diff-failed').stdout;
+    const parentCheck = this.run(['rev-parse', '--verify', `${commit}^`]);
+    if (parentCheck.status === 0) {
+      return this.runChecked(['diff', `${commit}^`, commit], 'git-diff-failed').stdout;
+    }
+
+    return this.runChecked(
+      ['diff-tree', '--root', '--no-commit-id', '--no-ext-diff', '-p', commit],
+      'git-diff-failed',
+    ).stdout;
   }
 
   getConflictDetails(path: string): ConflictDetails {
@@ -556,6 +563,59 @@ export class GitCommand {
 
   /** Stages a textual patch into the index without requiring worktree/index parity. */
   stagePatch(patch: string): void {
+    const lines = patch.split('\n');
+    const retained: Array<{ path: string; text: string[] }> = [];
+    let current: string[] = [];
+    let currentPath: string | null = null;
+    let unparseable = false;
+
+    const flush = (): void => {
+      if (current.length === 0) {
+        return;
+      }
+
+      if (!currentPath) {
+        unparseable = true;
+        return;
+      }
+
+      retained.push({ path: currentPath, text: current });
+    };
+
+    for (const line of lines) {
+      if (line.startsWith('diff --git ')) {
+        flush();
+        current = [line];
+        const marker = line.indexOf(' b/');
+        currentPath = marker >= 0 ? line.slice(marker + 3) : null;
+        continue;
+      }
+
+      if (current.length > 0) {
+        current.push(line);
+      }
+    }
+
+    flush();
+
+    if (retained.length > 1 && !unparseable) {
+      const seen = new Set<string>();
+      const filtered: string[][] = [];
+
+      for (let index = retained.length - 1; index >= 0; index -= 1) {
+        const section = retained[index];
+        if (seen.has(section.path)) {
+          continue;
+        }
+
+        seen.add(section.path);
+        filtered.push(section.text);
+      }
+
+      filtered.reverse();
+      patch = filtered.map((section) => section.join('\n')).join('\n');
+    }
+
     this.runChecked(['apply', '--cached', '--unidiff-zero'], 'git-stage-patch-failed', {
       stdin: patch,
     });
