@@ -702,6 +702,21 @@ describe('Git commit parsing', () => {
         rmSync(repoPath, { recursive: true, force: true });
       }
     });
+
+    it('diffs the root commit against the empty tree', () => {
+      const repoPath = createTempRepo();
+
+      try {
+        const git = new GitCommand(repoPath);
+        const result = git.listCommits({ limit: 1 });
+        const root = result.commits[0];
+
+        const diff = git.diffCommit(root.id);
+        assert.match(diff, /\+base/);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('listCommits query validation', () => {

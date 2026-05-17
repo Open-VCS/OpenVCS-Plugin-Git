@@ -510,7 +510,9 @@ export class GitCommand {
   }
 
   diffCommit(commit: string): string {
-    return this.runChecked(['diff', `${commit}^`, commit], 'git-diff-failed').stdout;
+    const parentCheck = this.run(['rev-parse', '--verify', `${commit}^`]);
+    const parent = parentCheck.status === 0 ? `${commit}^` : '4b825dc642cb6eb9a060e54bf899d1541f8d2d2a';
+    return this.runChecked(['diff', parent, commit], 'git-diff-failed').stdout;
   }
 
   getConflictDetails(path: string): ConflictDetails {
