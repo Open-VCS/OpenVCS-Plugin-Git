@@ -400,6 +400,7 @@ describe('Git commit integration', () => {
       writeFileSync(join(repoPath, 'tracked.txt'), 'staged\nunstaged\n', 'utf8');
 
       const patch = git.diffFile('tracked.txt');
+      assert.match(patch, /\+staged/);
       assert.match(patch, /\+unstaged/);
 
       git.stagePatch(patch);
