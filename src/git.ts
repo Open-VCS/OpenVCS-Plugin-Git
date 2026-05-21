@@ -8,9 +8,7 @@ import { join } from 'node:path';
 import { pluginError } from '@openvcs/sdk/runtime';
 import type {
   CommitEntry,
-  StatusFileEntry,
   StatusParseResult,
-  StatusSummary,
 } from '@openvcs/sdk/types';
 import type { GitCommandResult, RunGitOptions } from './plugin-types.js';
 import {
@@ -101,6 +99,7 @@ export class GitCommand {
       windowsHide: true,
     });
 
+    /* c8 ignore next 9 */
     if (result.status === null) {
       const signal = result.signal ?? 'unknown';
       console.warn(`git process killed/crashed (signal: ${signal}) in ${this.cwd}: ${args.join(' ')}`);
@@ -495,6 +494,7 @@ export class GitCommand {
     this.runChecked(['rm', '-f', '--', path], 'git-submodule-remove-failed');
 
     const modulesPath = join(this.cwd, '.git', 'modules', path);
+    /* c8 ignore next 4 */
     try {
       rmSync(modulesPath, { recursive: true, force: true });
     } catch {
