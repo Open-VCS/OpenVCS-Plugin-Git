@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { GitCommand } from '../src/git.js';
+import type { RunGitOptions } from '../src/plugin-types.js';
 
 /** Creates a GitCommand whose run/runChecked are stubbed. */
 function createMockGit(
@@ -195,14 +196,22 @@ describe('GitCommand advanced', () => {
       assert.deepStrictEqual(args[0], ['revert', 'abc123']);
     });
 
-    it('applyReversePatch passes patch', () => {
-      const { git, args } = captureRun();
-      git.runChecked = ((a: string[]) => {
-        args.push(a);
+    it('applyReversePatch passes patch via stdin', () => {
+      const { git } = captureRun();
+      let capturedArgs: string[] = [];
+      let capturedStdin: string | undefined;
+      git.runChecked = ((
+        a: string[],
+        _errorCode: string,
+        options?: RunGitOptions,
+      ) => {
+        capturedArgs = a;
+        capturedStdin = options?.stdin;
         return { status: 0, stdout: '', stderr: '' };
       }) as GitCommand['runChecked'];
       git.applyReversePatch('some-patch');
-      assert.deepStrictEqual(args[0], ['apply', '-R', 'some-patch']);
+      assert.deepStrictEqual(capturedArgs, ['apply', '-R', '--unidiff-zero']);
+      assert.strictEqual(capturedStdin, 'some-patch');
     });
 
     it('hardResetHead uses default HEAD when no ref given', () => {

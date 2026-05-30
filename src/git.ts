@@ -623,7 +623,9 @@ export class GitCommand {
   }
 
   applyReversePatch(patch: string): void {
-    this.runChecked(['apply', '-R', patch], 'git-apply-reverse-failed');
+    this.runChecked(['apply', '-R', '--unidiff-zero'], 'git-apply-reverse-failed', {
+      stdin: patch,
+    });
   }
 
   hardResetHead(ref?: string): void {
