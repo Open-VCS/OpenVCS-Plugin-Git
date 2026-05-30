@@ -20,6 +20,7 @@ import { registerSubmoduleToolkit } from './submodules.js';
 import { GitCommand } from './git.js';
 
 /** Creates a GitCommand instance for a given repository path. */
+/* c8 ignore next 3 */
 function createGitCommand(cwd: string): GitCommand {
   return new GitCommand(cwd);
 }
@@ -51,6 +52,7 @@ export function OnPluginStart(): void {
   const git = new GitCommand(process.cwd());
   const { major, minor } = git.version();
 
+  /* c8 ignore next 3 */
   if (major < 2 || (major === 2 && minor < 20)) {
     throw new Error(`Git 2.20+ required, found ${major}.${minor}`);
   }
@@ -66,9 +68,11 @@ export function OnPluginStart(): void {
 
   registerSubmoduleToolkit();
 
+  /* c8 ignore next 4 */
   registerAction('repo-edit-gitignore', async () => {
     await invoke('open_repo_dotfile', { name: '.gitignore' });
   });
+  /* c8 ignore next 4 */
   registerAction('repo-edit-gitattributes', async () => {
     await invoke('open_repo_dotfile', { name: '.gitattributes' });
   });

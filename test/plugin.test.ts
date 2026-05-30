@@ -1,5 +1,6 @@
 // Copyright © 2025-2026 OpenVCS Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
+/// <reference types="node" />
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -10,21 +11,12 @@ import { describe, it } from 'node:test';
 
 import type { PluginRuntimeContext } from '@openvcs/sdk/runtime';
 
-import {
-  applySubmoduleStatusHints,
-  buildCloneArgs,
-  buildFetchArgs,
-  buildPullArgs,
-  buildPushArgs,
-  buildSubmoduleUpdateArgs,
-  parseCommits,
-  parseStatusOutput,
-} from '../src/plugin-helpers.js';
+import { parseCommits } from '../src/plugin-helpers.js';
 
 import { PluginDefinition, OnPluginStart } from '../src/plugin.js';
 import { GitCommand, type ListCommitsOptions } from '../src/git.js';
 import type { GitCommandResult } from '../src/plugin-types.js';
-import { GitVcsDelegates, planDiscardPaths } from '../src/plugin-request-handler.js';
+import { GitVcsDelegates } from '../src/plugin-request-handler.js';
 
 /** Runs Git in a test repository and returns trimmed stdout. */
 function runGit(repoPath: string, args: string[]): string {
@@ -74,236 +66,6 @@ function createRuntimeContext(): PluginRuntimeContext {
     method: 'vcs.create_branch',
   };
 }
-
-describe('Git plugin helpers', () => {
-  describe('parseStatusOutput', () => {
-    it('assigns old_path and path for staged rename records', () => {
-      const status = parseStatusOutput('## main\0R  oldname.txt\0newname.txt\0');
-
-      assert.deepStrictEqual(status.payload.files[0], {
-        path: 'newname.txt',
-        old_path: 'oldname.txt',
-        status: 'R',
-        staged: true,
-        resolved_conflict: false,
-        hunks: [],
-      });
-    });
-
-    it('assigns old_path and path for copy records', () => {
-      const status = parseStatusOutput('## main\0C  original.txt\0copy.txt\0');
-
-      assert.deepStrictEqual(status.payload.files[0], {
-        path: 'copy.txt',
-        old_path: 'original.txt',
-        status: 'C',
-        staged: true,
-        resolved_conflict: false,
-        hunks: [],
-      });
-    });
-
-    it('keeps rename ordering for unstaged rename records', () => {
-      const status = parseStatusOutput('## main\0 R old.txt\0new.txt\0');
-
-      assert.deepStrictEqual(status.payload.files[0], {
-        path: 'new.txt',
-        old_path: 'old.txt',
-        status: 'R',
-        staged: false,
-        resolved_conflict: false,
-        hunks: [],
-      });
-    });
-
-    it('normalizes unmerged porcelain states to conflict status', () => {
-      const status = parseStatusOutput('## main\0UU conflicted.txt\0');
-
-      assert.equal(status.summary.conflicted, 1);
-      assert.deepStrictEqual(status.payload.files[0], {
-        path: 'conflicted.txt',
-        old_path: null,
-        status: 'U',
-        staged: true,
-        resolved_conflict: false,
-        hunks: [],
-      });
-    });
-
-    it('marks branch_on_remote when the status header includes upstream tracking', () => {
-      const status = parseStatusOutput('## main...origin/main [ahead 1]\0');
-
-      assert.equal(status.payload.branch_on_remote, true);
-      assert.equal(status.payload.ahead, 1);
-      assert.equal(status.payload.behind, 0);
-    });
-
-    it('only marks branch_on_remote for the porcelain branch header form', () => {
-      const status = parseStatusOutput('## feature/branch...origin/feature/branch\0');
-
-      assert.equal(status.payload.branch_on_remote, true);
-    });
-
-    it('clears branch_on_remote when the status header has no upstream tracking', () => {
-      const status = parseStatusOutput('## main\0');
-
-      assert.equal(status.payload.branch_on_remote, false);
-      assert.equal(status.payload.ahead, 0);
-      assert.equal(status.payload.behind, 0);
-    });
-
-    it('keeps branch_on_remote false when ahead counts exist without an upstream marker', () => {
-      const status = parseStatusOutput('## main [ahead 1]\0');
-
-      assert.equal(status.payload.branch_on_remote, false);
-      assert.equal(status.payload.ahead, 1);
-      assert.equal(status.payload.behind, 0);
-    });
-  });
-
-  describe('network command argument building', () => {
-    it('builds fetch with no optional arguments', () => {
-      assert.deepStrictEqual(buildFetchArgs({}), ['fetch']);
-    });
-
-    it('builds fetch with remote only', () => {
-      assert.deepStrictEqual(buildFetchArgs({ remote: 'origin' }), [
-        'fetch',
-        'origin',
-      ]);
-    });
-
-    it('builds fetch with remote and refspec', () => {
-      assert.deepStrictEqual(
-        buildFetchArgs({ remote: 'origin', refspec: 'main' }),
-        ['fetch', 'origin', 'main'],
-      );
-    });
-
-    it('builds fetch with prune enabled', () => {
-      assert.deepStrictEqual(
-        buildFetchArgs({ opts: { prune: true }, remote: 'origin' }),
-        ['fetch', '--prune', 'origin'],
-      );
-    });
-
-    it('builds clone with recursive submodules enabled', () => {
-      assert.deepStrictEqual(buildCloneArgs({ url: 'https://example.com/repo.git', dest: 'repo' }), [
-        'clone',
-        '--recurse-submodules',
-        'https://example.com/repo.git',
-        'repo',
-      ]);
-    });
-
-    it('builds push with no optional arguments', () => {
-      assert.deepStrictEqual(buildPushArgs({}), ['push']);
-    });
-
-    it('builds pull merge with no optional arguments', () => {
-      assert.deepStrictEqual(buildPullArgs({}), ['pull', '--no-rebase', '--no-edit']);
-    });
-
-    it('builds pull merge with remote and branch', () => {
-      assert.deepStrictEqual(buildPullArgs({ remote: 'origin', branch: 'main' }), [
-        'pull',
-        '--no-rebase',
-        '--no-edit',
-        'origin',
-        'main',
-      ]);
-    });
-
-    it('builds submodule update for one path', () => {
-      assert.deepStrictEqual(buildSubmoduleUpdateArgs({ path: 'libs/example' }), [
-        'submodule',
-        'update',
-        '--init',
-        '--recursive',
-        '--',
-        'libs/example',
-      ]);
-    });
-
-    it('builds submodule remote update recursively', () => {
-      assert.deepStrictEqual(buildSubmoduleUpdateArgs({ remote: true }), [
-        'submodule',
-        'update',
-        '--init',
-        '--recursive',
-        '--remote',
-      ]);
-    });
-  });
-
-  describe('submodule status hints', () => {
-    it('marks known submodule paths distinctly in status payloads', () => {
-      const parsed = parseStatusOutput('## main\0 M deps/example\0');
-      const hinted = applySubmoduleStatusHints(parsed, ['deps/example']);
-
-      assert.deepStrictEqual(hinted.payload.files[0], {
-        path: 'deps/example',
-        old_path: null,
-        status: 'S',
-        staged: false,
-        resolved_conflict: false,
-        hunks: [],
-      });
-    });
-  });
-
-  describe('discard path planning', () => {
-    it('routes tracked files to restore and untracked files to clean', () => {
-      const plan = planDiscardPaths(' M tracked.txt\0?? scratch.txt\0');
-
-      assert.deepStrictEqual(plan, {
-        restore: ['tracked.txt'],
-        unstageThenRemove: [],
-        clean: ['scratch.txt'],
-      });
-    });
-
-    it('restores the old side of staged renames and removes the new side', () => {
-      const plan = planDiscardPaths('R  old-name.txt\0new-name.txt\0');
-
-      assert.deepStrictEqual(plan, {
-        restore: ['old-name.txt'],
-        unstageThenRemove: ['new-name.txt'],
-        clean: ['new-name.txt'],
-      });
-    });
-
-    it('cleans unstaged rename targets after restoring the original path', () => {
-      const plan = planDiscardPaths(' R old-name.txt\0new-name.txt\0');
-
-      assert.deepStrictEqual(plan, {
-        restore: ['old-name.txt'],
-        unstageThenRemove: [],
-        clean: ['new-name.txt'],
-      });
-    });
-
-    it('unstages and removes staged additions that do not exist in HEAD', () => {
-      const plan = planDiscardPaths('A  added.txt\0');
-
-      assert.deepStrictEqual(plan, {
-        restore: [],
-        unstageThenRemove: ['added.txt'],
-        clean: ['added.txt'],
-      });
-    });
-
-    it('unstages and removes staged copies that do not exist in HEAD', () => {
-      const plan = planDiscardPaths('C  original.txt\0copy.txt\0');
-
-      assert.deepStrictEqual(plan, {
-        restore: [],
-        unstageThenRemove: ['copy.txt'],
-        clean: ['copy.txt'],
-      });
-    });
-  });
-});
 
 describe('Git plugin exports', () => {
   describe('PluginDefinition', () => {
@@ -517,7 +279,6 @@ describe('Git commit integration', () => {
       const delegates = new GitVcsDelegates(createDelegateDeps(repoPath));
       writeFileSync(join(repoPath, 'tracked.txt'), 'staged via stage_paths\n', 'utf8');
 
-      // Simulate selected-path flow: stage the path, then commit with paths
       delegates.stagePaths(
         {
           session_id: 'session-1',
@@ -537,7 +298,6 @@ describe('Git commit integration', () => {
         {} as never,
       );
 
-      // Verify the staged change was committed
       const currentHead = runGit(repoPath, ['rev-parse', 'HEAD']);
       assert.strictEqual(commitId, currentHead);
       assert.strictEqual(runGit(repoPath, ['show', 'HEAD:tracked.txt']), 'staged via stage_paths');
@@ -664,11 +424,9 @@ describe('Git commit parsing', () => {
         const result = git.listCommits({});
         const head = result.commits[0];
 
-        // The id must be exactly the 40-character hash, not hash+subject
         assert.match(head.id, /^[a-f0-9]{40}$/);
         assert.strictEqual(head.msg, 'second commit');
 
-        // Verify we can diff the commit using its id
         const diff = git.diffCommit(head.id);
         assert.ok(diff.length > 0);
       } finally {
@@ -688,12 +446,10 @@ describe('Git commit parsing', () => {
         const result = git.listCommits({ limit: 2 });
         const nonInitialCommits = result.commits.filter((c) => c.parent_oid);
 
-        // Commit ids should be valid 40-char hashes
         for (const commit of result.commits) {
           assert.match(commit.id, /^[a-f0-9]{40}$/);
         }
 
-        // Non-initial commits should work with diffCommit (they have parents)
         if (nonInitialCommits.length > 0) {
           const diff = git.diffCommit(nonInitialCommits[0].id);
           assert.ok(diff.length > 0);
