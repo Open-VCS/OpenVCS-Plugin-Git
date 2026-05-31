@@ -357,7 +357,6 @@ describe('GitCommand advanced', () => {
       assert.strictEqual(details.theirs, null);
       assert.strictEqual(details.base, null);
       assert.strictEqual(details.binary, false);
-      assert.strictEqual(details.lfs_pointer, false);
     });
 
     it('getConflictDetails detects LFS pointer content', () => {
@@ -370,7 +369,6 @@ describe('GitCommand advanced', () => {
         },
       });
       const details = git.getConflictDetails('conflict.txt');
-      assert.strictEqual(details.lfs_pointer, true);
       assert.strictEqual(details.binary, false);
     });
 
@@ -383,7 +381,6 @@ describe('GitCommand advanced', () => {
         },
       });
       const details = git.getConflictDetails('conflict.txt');
-      assert.strictEqual(details.lfs_pointer, false);
       assert.strictEqual(details.binary, true);
     });
 

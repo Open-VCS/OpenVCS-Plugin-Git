@@ -65,7 +65,6 @@ export interface ConflictDetails {
   theirs: string | null;
   base: string | null;
   binary: boolean;
-  lfs_pointer: boolean;
 }
 
 export interface StashEntry {
@@ -528,15 +527,15 @@ export class GitCommand {
     const base = this.run(['show', `:1:${path}`]);
 
     if (ours.status !== 0 || theirs.status !== 0) {
-      return { path, ours: null, theirs: null, base: null, binary: false, lfs_pointer: false };
+      return { path, ours: null, theirs: null, base: null, binary: false };
     }
 
     const oursContent = ours.stdout;
-    const lfs_pointer =
+    const lfsPointer =
       ours.stdout.includes('version https://git-lfs.github.com/spec/v1') ||
       theirs.stdout.includes('version https://git-lfs.github.com/spec/v1');
 
-    const binary = !lfs_pointer && (oursContent.startsWith('Binary\0') || oursContent.includes('\0'));
+    const binary = !lfsPointer && (oursContent.startsWith('Binary\0') || oursContent.includes('\0'));
 
     return {
       path,
@@ -544,7 +543,6 @@ export class GitCommand {
       theirs: theirs.stdout,
       base: base.status === 0 ? base.stdout : null,
       binary,
-      lfs_pointer,
     };
   }
 

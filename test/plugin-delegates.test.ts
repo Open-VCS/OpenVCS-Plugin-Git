@@ -371,7 +371,6 @@ describe('GitVcsDelegates unit tests', () => {
           theirs: 'their content',
           base: null,
           binary: false,
-          lfs_pointer: false,
         }),
       });
       const details = delegates.getConflictDetails({ session_id: 'session-1', path: 'conflict.txt' }, createRuntimeContext());
