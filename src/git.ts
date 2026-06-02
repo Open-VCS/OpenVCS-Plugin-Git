@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { spawnSync } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { pluginError } from '@openvcs/sdk/runtime';
 import type {
   CommitEntry,
+  StatusFileEntry,
   StatusParseResult,
+  VcsDiffResult,
 } from '@openvcs/sdk/types';
 import type { GitCommandResult, RunGitOptions } from './plugin-types.js';
 import {
@@ -150,7 +152,17 @@ export class GitCommand {
   status(): StatusParseResult & { exitCode: number } {
     const result = this.run(['status', '--porcelain=1', '--branch', '-z', '-uall']);
     const parsed = applySubmoduleStatusHints(parseStatusOutput(result.stdout), this.listSubmodulePaths());
-    return { ...parsed, exitCode: result.status };
+    return {
+      ...parsed,
+      payload: {
+        ...parsed.payload,
+        files: parsed.payload.files.map((file) => ({
+          ...file,
+          binary: this.detectStatusFileBinary(file),
+        })),
+      },
+      exitCode: result.status,
+    };
   }
 
   currentBranch(): string {
@@ -415,6 +427,63 @@ export class GitCommand {
     return new Set(this.readSubmoduleConfig().byPath.keys());
   }
 
+  /** Splits diff stdout without manufacturing a blank line for empty output. */
+  private splitDiffLines(output: string): string[] {
+    const normalized = output.trimEnd();
+    return normalized.length > 0 ? normalized.split('\n') : [];
+  }
+
+  /** Returns true when Git already reported the diff target as binary. */
+  private isBinaryDiffOutput(output: string): boolean {
+    const lines = this.splitDiffLines(output);
+    if (lines.length === 0) {
+      return false;
+    }
+
+    return lines.some((line) => {
+      const candidate = String(line || '');
+      return /^binary files /i.test(candidate)
+        || /^git binary patch/i.test(candidate)
+        || /^literal /i.test(candidate);
+    });
+  }
+
+  /** Returns binary classification for a status entry when worktree bytes are available. */
+  private detectStatusFileBinary(file: StatusFileEntry): boolean | null {
+    return this.readWorktreeBinaryFlag(file.path);
+  }
+
+  /** Reads worktree bytes and classifies likely binary content, or `null` when unavailable. */
+  private readWorktreeBinaryFlag(path: string): boolean | null {
+    const trimmedPath = String(path || '').trim();
+    if (!trimmedPath) {
+      return null;
+    }
+
+    try {
+      const contents = readFileSync(join(this.cwd, trimmedPath));
+      return this.isBinaryBuffer(contents);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Applies a lightweight byte sniff that keeps UTF-16 BOM text out of binary placeholders. */
+  private isBinaryBuffer(contents: Uint8Array): boolean {
+    if (contents.length === 0) {
+      return false;
+    }
+
+    const hasUtf16LeBom = contents.length >= 2 && contents[0] === 0xff && contents[1] === 0xfe;
+    const hasUtf16BeBom = contents.length >= 2 && contents[0] === 0xfe && contents[1] === 0xff;
+    if (hasUtf16LeBom || hasUtf16BeBom) {
+      return false;
+    }
+
+    const sample = contents.subarray(0, Math.min(contents.length, 8192));
+    return sample.includes(0);
+  }
+
   listSubmodules(): SubmoduleEntry[] {
     const { byPath: configByPath } = this.readSubmoduleConfig();
 
@@ -501,12 +570,21 @@ export class GitCommand {
     }
   }
 
-  diffFile(path: string): string {
+  diffFile(path: string): VcsDiffResult {
     const cachedDiff = this.runChecked(['diff', '--cached', '--no-ext-diff', '--', path], 'git-diff-failed')
       .stdout;
     const worktreeDiff = this.runChecked(['diff', '--no-ext-diff', '--', path], 'git-diff-failed')
       .stdout;
-    return cachedDiff + worktreeDiff;
+    const lines = this.splitDiffLines(cachedDiff + worktreeDiff);
+    const binaryFromOutput = this.isBinaryDiffOutput(cachedDiff) || this.isBinaryDiffOutput(worktreeDiff);
+    const binary = binaryFromOutput
+      ? true
+      : (lines.length > 0 ? false : this.readWorktreeBinaryFlag(path));
+
+    return {
+      lines,
+      binary,
+    };
   }
 
   diffCommit(commit: string): string {
