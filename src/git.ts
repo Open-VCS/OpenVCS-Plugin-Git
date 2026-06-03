@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { spawnSync } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { pluginError } from '@openvcs/sdk/runtime';
 import type {
   CommitEntry,
+  StatusFileEntry,
   StatusParseResult,
+  VcsDiffResult,
 } from '@openvcs/sdk/types';
 import type { GitCommandResult, RunGitOptions } from './plugin-types.js';
 import {
@@ -65,7 +67,6 @@ export interface ConflictDetails {
   theirs: string | null;
   base: string | null;
   binary: boolean;
-  lfs_pointer: boolean;
 }
 
 export interface StashEntry {
@@ -151,7 +152,17 @@ export class GitCommand {
   status(): StatusParseResult & { exitCode: number } {
     const result = this.run(['status', '--porcelain=1', '--branch', '-z', '-uall']);
     const parsed = applySubmoduleStatusHints(parseStatusOutput(result.stdout), this.listSubmodulePaths());
-    return { ...parsed, exitCode: result.status };
+    return {
+      ...parsed,
+      payload: {
+        ...parsed.payload,
+        files: parsed.payload.files.map((file) => ({
+          ...file,
+          binary: this.detectStatusFileBinary(file),
+        })),
+      },
+      exitCode: result.status,
+    };
   }
 
   currentBranch(): string {
@@ -416,6 +427,63 @@ export class GitCommand {
     return new Set(this.readSubmoduleConfig().byPath.keys());
   }
 
+  /** Splits diff stdout without manufacturing a blank line for empty output. */
+  private splitDiffLines(output: string): string[] {
+    const normalized = output.trimEnd();
+    return normalized.length > 0 ? normalized.split('\n') : [];
+  }
+
+  /** Returns true when Git already reported the diff target as binary. */
+  private isBinaryDiffOutput(output: string): boolean {
+    const lines = this.splitDiffLines(output);
+    if (lines.length === 0) {
+      return false;
+    }
+
+    return lines.some((line) => {
+      const candidate = String(line || '');
+      return /^binary files /i.test(candidate)
+        || /^git binary patch/i.test(candidate)
+        || /^literal /i.test(candidate);
+    });
+  }
+
+  /** Returns binary classification for a status entry when worktree bytes are available. */
+  private detectStatusFileBinary(file: StatusFileEntry): boolean | null {
+    return this.readWorktreeBinaryFlag(file.path);
+  }
+
+  /** Reads worktree bytes and classifies likely binary content, or `null` when unavailable. */
+  private readWorktreeBinaryFlag(path: string): boolean | null {
+    const trimmedPath = String(path || '').trim();
+    if (!trimmedPath) {
+      return null;
+    }
+
+    try {
+      const contents = readFileSync(join(this.cwd, trimmedPath));
+      return this.isBinaryBuffer(contents);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Applies a lightweight byte sniff that keeps UTF-16 BOM text out of binary placeholders. */
+  private isBinaryBuffer(contents: Uint8Array): boolean {
+    if (contents.length === 0) {
+      return false;
+    }
+
+    const hasUtf16LeBom = contents.length >= 2 && contents[0] === 0xff && contents[1] === 0xfe;
+    const hasUtf16BeBom = contents.length >= 2 && contents[0] === 0xfe && contents[1] === 0xff;
+    if (hasUtf16LeBom || hasUtf16BeBom) {
+      return false;
+    }
+
+    const sample = contents.subarray(0, Math.min(contents.length, 8192));
+    return sample.includes(0);
+  }
+
   listSubmodules(): SubmoduleEntry[] {
     const { byPath: configByPath } = this.readSubmoduleConfig();
 
@@ -502,12 +570,21 @@ export class GitCommand {
     }
   }
 
-  diffFile(path: string): string {
+  diffFile(path: string): VcsDiffResult {
     const cachedDiff = this.runChecked(['diff', '--cached', '--no-ext-diff', '--', path], 'git-diff-failed')
       .stdout;
     const worktreeDiff = this.runChecked(['diff', '--no-ext-diff', '--', path], 'git-diff-failed')
       .stdout;
-    return cachedDiff + worktreeDiff;
+    const lines = this.splitDiffLines(cachedDiff + worktreeDiff);
+    const binaryFromOutput = this.isBinaryDiffOutput(cachedDiff) || this.isBinaryDiffOutput(worktreeDiff);
+    const binary = binaryFromOutput
+      ? true
+      : (lines.length > 0 ? false : this.readWorktreeBinaryFlag(path));
+
+    return {
+      lines,
+      binary,
+    };
   }
 
   diffCommit(commit: string): string {
@@ -528,15 +605,15 @@ export class GitCommand {
     const base = this.run(['show', `:1:${path}`]);
 
     if (ours.status !== 0 || theirs.status !== 0) {
-      return { path, ours: null, theirs: null, base: null, binary: false, lfs_pointer: false };
+      return { path, ours: null, theirs: null, base: null, binary: false };
     }
 
     const oursContent = ours.stdout;
-    const lfs_pointer =
+    const lfsPointer =
       ours.stdout.includes('version https://git-lfs.github.com/spec/v1') ||
       theirs.stdout.includes('version https://git-lfs.github.com/spec/v1');
 
-    const binary = !lfs_pointer && (oursContent.startsWith('Binary\0') || oursContent.includes('\0'));
+    const binary = !lfsPointer && (oursContent.startsWith('Binary\0') || oursContent.includes('\0'));
 
     return {
       path,
@@ -544,7 +621,6 @@ export class GitCommand {
       theirs: theirs.stdout,
       base: base.status === 0 ? base.stdout : null,
       binary,
-      lfs_pointer,
     };
   }
 
@@ -619,6 +695,139 @@ export class GitCommand {
 
     this.runChecked(['apply', '--cached', '--unidiff-zero'], 'git-stage-patch-failed', {
       stdin: patch,
+    });
+  }
+
+  /**
+   * Stages structured hunk/line selections (VCS-agnostic).
+   *
+   * For each file, fetches the worktree diff, extracts the selected hunks/lines,
+   * builds a combined sub-patch, and applies it to the index atomically.
+   */
+  stageSelections(
+    selections: Array<{ path: string; whole_hunks: number[]; partial_hunks: Record<number, number[]> }>,
+  ): void {
+    const filePatches: string[] = [];
+
+    for (const sel of selections) {
+      // Fetch only the worktree diff (not --cached) — cached changes are
+      // already staged and must not be re-applied.
+      const raw = this.runChecked(
+        ['diff', '--no-ext-diff', '--no-color', '--', sel.path],
+        'git-diff-failed',
+      ).stdout;
+      if (!raw.trim()) continue;
+
+      const lines = this.splitDiffLines(raw);
+      if (lines.length === 0) continue;
+
+      const normPath = sel.path.replace(/\\/g, '/');
+
+      // Find the first @@ line to separate prelude from hunks
+      const firstHunk = lines.findIndex(l => l.startsWith('@@'));
+      if (firstHunk < 0) continue;
+
+      const prelude = lines.slice(0, firstHunk);
+      const rest = lines.slice(firstHunk);
+
+      // Build headerExtras: metadata lines that aren't diff --git, ---, or +++
+      const headerExtras = prelude.filter(l =>
+        !!l &&
+        !l.startsWith('diff --git') &&
+        !l.startsWith('--- ') &&
+        !l.startsWith('+++ ')
+      );
+
+      // Locate all hunk @@ positions within rest
+      const starts: number[] = [];
+      for (let i = 0; i < rest.length; i++) {
+        if (rest[i].startsWith('@@')) starts.push(i);
+      }
+      if (starts.length === 0) continue;
+      starts.push(rest.length);
+
+      const isAdd = prelude.some(l => l.startsWith('--- /dev/null'));
+      const isDel = prelude.some(l => l.startsWith('+++ /dev/null'));
+      const wantWhole = new Set(sel.whole_hunks.filter(n => Number.isFinite(n)));
+
+      let out = `diff --git a/${normPath} b/${normPath}\n`;
+      if (headerExtras.length) out += headerExtras.join('\n') + '\n';
+      if (isAdd) out += `--- /dev/null\n+++ b/${normPath}\n`;
+      else if (isDel) out += `--- a/${normPath}\n+++ /dev/null\n`;
+      else out += `--- a/${normPath}\n+++ b/${normPath}\n`;
+
+      for (let h = 0; h < starts.length - 1; h++) {
+        const s = starts[h];
+        const e = starts[h + 1];
+        const block = rest.slice(s, e);
+        const header = block[0] || '';
+        const m = /@@\s*-([0-9]+),?([0-9]*)\s*\+([0-9]+),?([0-9]*)\s*@@/.exec(header);
+        if (!m) continue;
+        const aStart = parseInt(m[1] || '0', 10) || 0;
+        const cStart = parseInt(m[3] || '0', 10) || 0;
+        const content = block.slice(1);
+
+        if (wantWhole.has(h)) {
+          out += header + '\n' + content.join('\n') + '\n';
+          continue;
+        }
+
+        const picksRaw = (sel.partial_hunks && Array.isArray(sel.partial_hunks[h]))
+          ? sel.partial_hunks[h]
+          : (sel.partial_hunks && sel.partial_hunks[h] ? sel.partial_hunks[h] : []);
+        const picksAdj = Array.isArray(picksRaw)
+          ? picksRaw.map((i: number) => i - 1).filter((i: number) => i >= 0 && i < content.length)
+          : [];
+        const pickSet = new Set<number>(picksAdj);
+        if (pickSet.size === 0) continue;
+
+        // prefix counts for old/new positions
+        const prefOld: number[] = new Array(content.length + 1).fill(0);
+        const prefNew: number[] = new Array(content.length + 1).fill(0);
+        for (let i = 0; i < content.length; i++) {
+          const ch = (content[i] || '')[0] || ' ';
+          const isMeta = ch === '\\';
+          prefOld[i + 1] = prefOld[i] + (isMeta ? 0 : (ch === '+' ? 0 : 1));
+          prefNew[i + 1] = prefNew[i] + (isMeta ? 0 : (ch === '-' ? 0 : 1));
+        }
+
+        // Group consecutive selected lines into mini-hunks
+        const sorted = Array.from(pickSet).sort((x, y) => x - y);
+        let group: number[] = [];
+
+        const flush = (): void => {
+          if (group.length === 0) return;
+          const i0 = group[0];
+          const old_start = aStart + prefOld[i0];
+          const new_start = cStart + prefNew[i0];
+          const slice = group.map(i => content[i]);
+          const contentLines = slice.filter(l => (l || '')[0] !== '\\');
+          const metaLines = slice.filter(l => (l || '')[0] === '\\');
+          const old_count = contentLines.filter(l => { const c = (l || '')[0]; return c !== '+'; }).length;
+          const new_count = contentLines.filter(l => { const c = (l || '')[0]; return c !== '-'; }).length;
+          if (old_count === 0 && new_count === 0) { group = []; return; }
+          out += `@@ -${old_start},${old_count} +${new_start},${new_count} @@\n`;
+          out += contentLines.join('\n') + '\n';
+          if (metaLines.length) out += metaLines.join('\n') + '\n';
+          group = [];
+        };
+
+        for (let i = 0; i < sorted.length; i++) {
+          if (group.length === 0) { group.push(sorted[i]); continue; }
+          if (sorted[i] === group[group.length - 1] + 1) group.push(sorted[i]);
+          else { flush(); group.push(sorted[i]); }
+        }
+        flush();
+      }
+
+      filePatches.push(out.trimEnd());
+    }
+
+    if (filePatches.length === 0) return;
+
+    const combinedPatch = filePatches.join('\n') + '\n';
+    this.runChecked(['apply', '--cached', '--unidiff-zero'], 'git-stage-patch-failed', {
+      stdin: combinedPatch,
     });
   }
 

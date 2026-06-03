@@ -29,6 +29,7 @@ jobs:
           OPENCODE_PERMISSION: '{"edit":"deny","write":"deny","patch":"deny"}'
         with:
           model: ${{ vars.OPENCODE_REVIEW_MODEL }}
+          variant: ${{ vars.OPENCODE_REVIEW_VARIANT }}
           use_github_token: true
           prompt: |
             Before anything else, read and follow AGENTS.md for this repository and module.
@@ -50,6 +51,7 @@ jobs:
           OPENCODE_PERMISSION: '{"edit":"deny","write":"deny","patch":"deny"}'
         with:
           model: ${{ vars.OPENCODE_REVIEW_MODEL_FALLBACK }}
+          variant: ${{ vars.OPENCODE_REVIEW_VARIANT }}
           use_github_token: true
           prompt: |
             Before anything else, read and follow AGENTS.md for this repository and module.

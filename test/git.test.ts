@@ -4,6 +4,9 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { GitCommand, type FetchOptions, type PullOptions } from '../src/git.js';
 
@@ -92,6 +95,45 @@ describe('GitCommand', () => {
       assert.strictEqual(status.exitCode, 0);
       assert.strictEqual(status.payload.files[0].status, 'S');
       assert.strictEqual(status.payload.files[1].status, 'M');
+    });
+
+    it('marks untracked worktree binaries in status payloads', () => {
+      const repoPath = mkdtempSync(join(tmpdir(), 'openvcs-git-binary-status-'));
+      try {
+        writeFileSync(join(repoPath, 'img.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]));
+        const git = new GitCommand(repoPath);
+        git.run = ((args: string[]) => {
+          if (args[0] === 'status') {
+            return { status: 0, stdout: '## main\0?? img.png\0', stderr: '' };
+          }
+          return { status: 1, stdout: '', stderr: '' };
+        }) as GitCommand['run'];
+
+        const status = git.status();
+
+        assert.strictEqual(status.payload.files[0].path, 'img.png');
+        assert.strictEqual(status.payload.files[0].binary, true);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('diffFile', () => {
+    it('returns structured binary metadata for worktree binaries with no textual diff', () => {
+      const repoPath = mkdtempSync(join(tmpdir(), 'openvcs-git-binary-diff-'));
+      try {
+        writeFileSync(join(repoPath, 'img.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]));
+        const git = new GitCommand(repoPath);
+        git.runChecked = (() => ({ status: 0, stdout: '', stderr: '' })) as GitCommand['runChecked'];
+
+        assert.deepStrictEqual(git.diffFile('img.png'), {
+          lines: [],
+          binary: true,
+        });
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
     });
   });
 
@@ -433,8 +475,10 @@ describe('GitCommand', () => {
         },
       });
       const diff = git.diffFile('tracked.txt');
-      assert.match(diff, /cached diff/);
-      assert.match(diff, /worktree diff/);
+      assert.deepStrictEqual(diff, {
+        lines: ['cached diff', 'worktree diff'],
+        binary: false,
+      });
     });
 
     it('diffCommit diffs against parent when parent exists', () => {

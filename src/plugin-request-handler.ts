@@ -428,9 +428,9 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
   override diffFile(
     params: OpenVcs.VcsDiffFileParams,
     _context: PluginRuntimeContext,
-  ): string[] {
+  ): OpenVcs.VcsDiffFileResponse {
     const git = this.requireGit(params.session_id);
-    return splitDiffLines(git.diffFile(asTrimmedString(params.path)));
+    return git.diffFile(asTrimmedString(params.path));
   }
 
   override diffCommit(
@@ -481,6 +481,15 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
   ): null {
     const git = this.requireGit(params.session_id);
     git.stagePatch(asString(params.patch));
+    return null;
+  }
+
+  override stageSelections(
+    params: OpenVcs.VcsStageSelectionsParams,
+    _context: PluginRuntimeContext,
+  ): null {
+    const git = this.requireGit(params.session_id);
+    git.stageSelections(params.selections);
     return null;
   }
 

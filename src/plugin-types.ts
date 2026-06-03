@@ -10,6 +10,8 @@ export type {
   StatusParseResult,
   StatusPayload,
   StatusSummary,
+  VcsDiffFileResponse,
+  VcsDiffResult,
 } from '@openvcs/sdk/types';
 
 /** Describes one opened Git repository session. */

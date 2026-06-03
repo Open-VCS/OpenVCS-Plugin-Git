@@ -352,13 +352,14 @@ describe('GitVcsDelegates unit tests', () => {
       const delegates = createMockDelegate({
         status: () => ({
           summary: { untracked: 0, modified: 0, staged: 0, conflicted: 0 },
-          payload: { files: [{ path: 'file.txt', old_path: null, status: 'M', staged: true, resolved_conflict: false, hunks: [] }], ahead: 0, behind: 0, branch_on_remote: false },
+          payload: { files: [{ path: 'file.txt', old_path: null, status: 'M', staged: true, resolved_conflict: false, hunks: [], binary: false }], ahead: 0, behind: 0, branch_on_remote: false },
           exitCode: 0,
         }),
       });
       const payload = delegates.getStatusPayload({ session_id: 'session-1' }, createRuntimeContext());
       assert.strictEqual(payload.files.length, 1);
       assert.strictEqual(payload.files[0].path, 'file.txt');
+      assert.strictEqual(payload.files[0].binary, false);
     });
   });
 
@@ -371,7 +372,6 @@ describe('GitVcsDelegates unit tests', () => {
           theirs: 'their content',
           base: null,
           binary: false,
-          lfs_pointer: false,
         }),
       });
       const details = delegates.getConflictDetails({ session_id: 'session-1', path: 'conflict.txt' }, createRuntimeContext());
@@ -733,12 +733,12 @@ describe('GitVcsDelegates unit tests', () => {
   });
 
   describe('diffFile delegate', () => {
-    it('splits diff output into lines', () => {
+    it('returns structured diff payloads from git', () => {
       const delegates = createMockDelegate({
-        diffFile: () => 'line1\nline2\nline3',
+        diffFile: () => ({ lines: ['line1', 'line2', 'line3'], binary: false }),
       });
-      const lines = delegates.diffFile({ session_id: 'session-1', path: 'file.txt' }, createRuntimeContext());
-      assert.deepStrictEqual(lines, ['line1', 'line2', 'line3']);
+      const diff = delegates.diffFile({ session_id: 'session-1', path: 'file.txt' }, createRuntimeContext());
+      assert.deepStrictEqual(diff, { lines: ['line1', 'line2', 'line3'], binary: false });
     });
   });
 

@@ -135,7 +135,7 @@ describe('Git plugin exports', () => {
 describe('Git commit integration', () => {
   it('returns an empty diff array when stdout is empty', () => {
     const delegates = createMockDelegate({
-      diffFile: () => '',
+      diffFile: () => ({ lines: [], binary: false }),
       diffCommit: () => '',
     });
 
@@ -148,7 +148,7 @@ describe('Git commit integration', () => {
       createRuntimeContext(),
     );
 
-    assert.deepStrictEqual(fileDiff, []);
+    assert.deepStrictEqual(fileDiff, { lines: [], binary: false });
     assert.deepStrictEqual(commitDiff, []);
   });
 
@@ -162,10 +162,11 @@ describe('Git commit integration', () => {
       writeFileSync(join(repoPath, 'tracked.txt'), 'staged\nunstaged\n', 'utf8');
 
       const patch = git.diffFile('tracked.txt');
-      assert.match(patch, /\+staged/);
-      assert.match(patch, /\+unstaged/);
+      const patchText = patch.lines.join('\n');
+      assert.match(patchText, /\+staged/);
+      assert.match(patchText, /\+unstaged/);
 
-      git.stagePatch(patch);
+      git.stagePatch(`${patchText}\n`);
 
       const cachedDiff = runGit(repoPath, ['diff', '--cached', '--', 'tracked.txt']);
       assert.match(cachedDiff, /\+staged/);
@@ -184,8 +185,9 @@ describe('Git commit integration', () => {
       runGit(repoPath, ['add', 'tracked.txt']);
 
       const patch = git.diffFile('tracked.txt');
+      const patchText = patch.lines.join('\n');
 
-      assert.match(patch, /\+staged only/);
+      assert.match(patchText, /\+staged only/);
     } finally {
       rmSync(repoPath, { recursive: true, force: true });
     }
