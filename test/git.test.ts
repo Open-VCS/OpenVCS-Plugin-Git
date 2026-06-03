@@ -177,6 +177,19 @@ describe('GitCommand', () => {
         },
       );
     });
+
+    it('includes signal info when process is killed', () => {
+      const git = createMockGit({
+        run: () => ({ status: -2, stdout: '', stderr: 'Killed by signal SIGTERM' }),
+      });
+      assert.throws(
+        () => git.runChecked(['status'], 'git-status-failed'),
+        (err: Error) => {
+          assert.match(err.message, /signal/);
+          return true;
+        },
+      );
+    });
   });
 
   describe('currentHead', () => {

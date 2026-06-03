@@ -210,6 +210,15 @@ describe('Git plugin helpers', () => {
       });
     });
 
+    it('skips file entries with whitespace-only path', () => {
+      const plan = planDiscardPaths(' M tracked.txt\0??   \0');
+      assert.deepStrictEqual(plan, {
+        restore: ['tracked.txt'],
+        unstageThenRemove: [],
+        clean: [],
+      });
+    });
+
     it('restores the old side of staged renames and removes the new side', () => {
       const plan = planDiscardPaths('R  old-name.txt\0new-name.txt\0');
 
@@ -256,6 +265,58 @@ describe('Git plugin helpers', () => {
       const status = parseStatusOutput('## main\0XY\0?? untracked.txt\0');
       assert.strictEqual(status.payload.files.length, 1);
       assert.strictEqual(status.payload.files[0].path, 'untracked.txt');
+    });
+  });
+
+  describe('parseStatusOutput behind count', () => {
+    it('parses behind count from status header', () => {
+      const status = parseStatusOutput('## main...origin/main [behind 3]\0');
+      assert.equal(status.payload.behind, 3);
+      assert.equal(status.payload.ahead, 0);
+    });
+
+    it('parses both ahead and behind counts', () => {
+      const status = parseStatusOutput('## main...origin/main [ahead 2, behind 5]\0');
+      assert.equal(status.payload.ahead, 2);
+      assert.equal(status.payload.behind, 5);
+    });
+  });
+
+  describe('parseStatusOutput DD conflict', () => {
+    it('normalizes DD porcelain state to conflict status U', () => {
+      const status = parseStatusOutput('## main\0DD both-deleted.txt\0');
+      assert.equal(status.summary.conflicted, 1);
+      assert.equal(status.payload.files[0].status, 'U');
+    });
+  });
+
+  describe('parseStatusOutput AA conflict', () => {
+    it('normalizes AA porcelain state to conflict status U', () => {
+      const status = parseStatusOutput('## main\0AA both-added.txt\0');
+      assert.equal(status.summary.conflicted, 1);
+      assert.equal(status.payload.files[0].status, 'U');
+    });
+  });
+
+  describe('parseStatusOutput untracked summary', () => {
+    it('counts untracked files in summary', () => {
+      const status = parseStatusOutput('## main\0?? new1.txt\0?? new2.txt\0');
+      assert.equal(status.summary.untracked, 2);
+    });
+  });
+
+  describe('parseStatusOutput staged and modified summary', () => {
+    it('counts staged and modified files separately', () => {
+      const status = parseStatusOutput('## main\0M  staged.txt\0 M modified.txt\0');
+      assert.equal(status.summary.staged, 1);
+      assert.equal(status.summary.modified, 1);
+    });
+  });
+
+  describe('parseStatusOutput status fallback to M', () => {
+    it('falls back to M when status is both spaces', () => {
+      const status = parseStatusOutput('## main\0   untracked.txt\0');
+      assert.equal(status.payload.files[0].status, 'M');
     });
   });
 

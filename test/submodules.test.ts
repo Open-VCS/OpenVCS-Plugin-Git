@@ -116,6 +116,13 @@ describe('submodules', () => {
     });
   });
 
+  describe('handleSubmoduleModalError default fallback', () => {
+    it('uses default openFallback when none provided', async () => {
+      const result = await handleSubmoduleModalError('test error', new Error('some error'));
+      assert.ok(result);  // default buildErrorModal().open() returns a modal object
+    });
+  });
+
   describe('asPayload', () => {
     it('returns empty object for null', () => {
       assert.deepStrictEqual(asPayload(null), {});
