@@ -32,8 +32,14 @@ through `@openvcs/sdk/runtime` delegates and exposes a single VCS backend id:
 - Unmerged porcelain states such as `UU`, `AA`, and `DD` are normalized to `U`
   in status payloads so the client opens merge-conflict UI instead of a normal
   diff view.
+- Status payload entries now attach optional `binary` metadata derived from the
+  current worktree bytes when the path exists, so the client can avoid reading
+  obvious binary files as text during normal file selection.
 - File diffs first read worktree changes and fall back to `git diff --cached`
   for staged-only files so selected staged changes still render textual hunks.
+- `vcs.diff_file` returns a structured `{ lines, binary }` payload. The plugin
+  marks binary explicitly when Git emits binary patch markers, and otherwise
+  falls back to a lightweight worktree byte sniff when diff output is empty.
 - Commit history uses the current `HEAD` or requested revision instead of
   `git log --all`, so internal refs such as `refs/stash` are not shown as normal
   history entries.

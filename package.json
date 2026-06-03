@@ -1,7 +1,8 @@
 {
   "name": "@openvcs/git-plugin",
   "version": "0.3.2",
-  "description": "OpenVCS Git plugin - Node.js runtime",
+  "description": "Git VCS backend plugin for OpenVCS",
+  "author": "OpenVCS Contributors",
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/Open-VCS/OpenVCS-Plugin-Git",
   "repository": {
@@ -18,9 +19,6 @@
   "openvcs": {
     "id": "openvcs.git",
     "name": "Git",
-    "version": "0.3.2",
-    "author": "OpenVCS Contributors",
-    "description": "Git VCS backend plugin for OpenVCS",
     "default_enabled": true,
     "module": {
       "exec": "openvcs-git-plugin.js",
@@ -41,7 +39,7 @@
   "scripts": {
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "coverage": "c8 --include src --exclude 'src/plugin-types.ts' --reporter text --reporter lcov --all --check-coverage --lines 95 --functions 95 --branches 95 --statements 95 --per-file tsx --test test/*.test.ts",
+    "coverage": "c8 --include src --exclude 'src/plugin-types.ts' --reporter text --reporter lcov --all --check-coverage --lines 100 --functions 100 --branches 100 --statements 100 --per-file tsx --test test/*.test.ts",
     "prepack": "npm run build",
     "build:plugin": "tsc -p tsconfig.json",
     "build": "node ./node_modules/@openvcs/sdk/bin/openvcs.js build"

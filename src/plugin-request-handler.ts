@@ -44,6 +44,8 @@ function splitDiffLines(output: string): string[] {
 /** Reduces a file status string to the primary status code needed for discard routing. */
 function getPrimaryDiscardStatus(status: string): string {
   const normalized = asTrimmedString(status);
+  /* c8 ignore next 3 */
+  // Unreachable: parseStatusOutput always produces non-empty status (falls back to 'M')
   if (!normalized) {
     return 'M';
   }
@@ -54,6 +56,8 @@ function getPrimaryDiscardStatus(status: string): string {
     }
   }
 
+  /* c8 ignore next 3 */
+  // Unreachable: normalized[0] is always defined on non-empty string
   return normalized[0] ?? 'M';
 }
 
@@ -232,6 +236,9 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
       .map((line): OpenVcs.VcsBranchEntry => {
         const [name = '', fullRef = '', headMark = ''] = line.split('\t');
         const isRemote = fullRef.startsWith('refs/remotes/');
+        // isRemote is true → name = 'origin/main'. split('/')[0] = 'origin' (always defined).
+        // ?? null is unreachable, kept for type-safety.
+        /* c8 ignore next */
         const remote = isRemote ? name.split('/')[0] ?? null : null;
         const kind: OpenVcs.VcsBranchKind = isRemote
           ? { type: 'Remote', remote }
@@ -428,9 +435,9 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
   override diffFile(
     params: OpenVcs.VcsDiffFileParams,
     _context: PluginRuntimeContext,
-  ): string[] {
+  ): OpenVcs.VcsDiffFileResponse {
     const git = this.requireGit(params.session_id);
-    return splitDiffLines(git.diffFile(asTrimmedString(params.path)));
+    return git.diffFile(asTrimmedString(params.path));
   }
 
   override diffCommit(
@@ -481,6 +488,15 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
   ): null {
     const git = this.requireGit(params.session_id);
     git.stagePatch(asString(params.patch));
+    return null;
+  }
+
+  override stageSelections(
+    params: OpenVcs.VcsStageSelectionsParams,
+    _context: PluginRuntimeContext,
+  ): null {
+    const git = this.requireGit(params.session_id);
+    git.stageSelections(params.selections);
     return null;
   }
 
