@@ -331,6 +331,78 @@ describe('Git commit integration', () => {
       rmSync(repoPath, { recursive: true, force: true });
     }
   });
+
+  it('stages selected hunks only with stageSelections', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const git = new GitCommand(repoPath);
+      // 10 lines so edits at top and bottom are far enough apart for separate hunks
+      writeFileSync(
+        join(repoPath, 'tracked.txt'),
+        'a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\n',
+        'utf8',
+      );
+      runGit(repoPath, ['add', 'tracked.txt']);
+      runGit(repoPath, ['commit', '-m', 'ten lines']);
+      // Edit a1→change1 and a10→change10 — these produce 2 hunks
+      writeFileSync(
+        join(repoPath, 'tracked.txt'),
+        'change1\na2\na3\na4\na5\na6\na7\na8\na9\nchange10\n',
+        'utf8',
+      );
+
+      // Stage only the first hunk (a1→change1)
+      git.stageSelections([{
+        path: 'tracked.txt',
+        whole_hunks: [0],
+        partial_hunks: {},
+      }]);
+
+      const stagedDiff = runGit(repoPath, ['diff', '--cached', '--', 'tracked.txt']);
+      assert.match(stagedDiff, /change1/);
+      assert.doesNotMatch(stagedDiff, /change10/);
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it('stages partial line selections via stageSelections', () => {
+    const repoPath = createTempRepo();
+
+    try {
+      const git = new GitCommand(repoPath);
+      writeFileSync(join(repoPath, 'tracked.txt'), 'apple\nbanana\n', 'utf8');
+      runGit(repoPath, ['add', 'tracked.txt']);
+      runGit(repoPath, ['commit', '-m', 'two fruits']);
+      // Append three new lines
+      writeFileSync(
+        join(repoPath, 'tracked.txt'),
+        'apple\nbanana\ncherry\ndate\nelderberry\n',
+        'utf8',
+      );
+
+      // Hunk content (1-based UI indices):
+      //   1:  apple      (context)
+      //   2:  banana     (context)
+      //   3: +cherry     (addition)
+      //   4: +date       (addition)
+      //   5: +elderberry (addition)
+      // Select only cherry (UI index 3) which maps to content index 2
+      git.stageSelections([{
+        path: 'tracked.txt',
+        whole_hunks: [],
+        partial_hunks: { 0: [3] },
+      }]);
+
+      const stagedDiff = runGit(repoPath, ['diff', '--cached', '--', 'tracked.txt']);
+      assert.match(stagedDiff, /cherry/);
+      assert.doesNotMatch(stagedDiff, /date/);
+      assert.doesNotMatch(stagedDiff, /elderberry/);
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Git commit parsing', () => {

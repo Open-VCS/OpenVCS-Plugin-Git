@@ -573,4 +573,165 @@ describe('GitCommand advanced', () => {
       assert.strictEqual(stdin, patch);
     });
   });
+
+  describe('stageSelections', () => {
+    it('applies combined patch from whole-hunk selections', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1 +1 @@',
+            '-old',
+            '+new',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [0],
+        partial_hunks: {},
+      }]);
+      assert.ok(appliedStdin.includes('diff --git a/file.txt b/file.txt'));
+      assert.ok(appliedStdin.includes('@@ -1 +1 @@'));
+      assert.ok(appliedStdin.includes('-old'));
+      assert.ok(appliedStdin.includes('+new'));
+    });
+
+    it('handles partial_hunks (line-level selections)', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1,2 +1,2 @@',
+            '-old1',
+            '+new1',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [],
+        partial_hunks: { 0: [1] },
+      }]);
+      assert.ok(appliedStdin.includes('@@'));
+      assert.ok(appliedStdin.includes('-old1'));
+    });
+
+    it('skips files with no matching hunks', () => {
+      let runCount = 0;
+      const git = createMockGit({
+        runChecked: ((args: string[]) => {
+          runCount++;
+          if (args[0] === 'diff') return { status: 0, stdout: '', stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'nonexistent.txt',
+        whole_hunks: [0],
+        partial_hunks: {},
+      }]);
+      assert.strictEqual(runCount, 1);
+    });
+
+    it('handles multiple files with different selections', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          const path = args.at(-1);
+          if (args[0] === 'diff' && path === 'a.txt') return { status: 0, stdout: [
+            'diff --git a/a.txt b/a.txt',
+            '--- a/a.txt',
+            '+++ b/a.txt',
+            '@@ -1 +1 @@',
+            '-a_old',
+            '+a_new',
+          ].join('\n'), stderr: '' };
+          if (args[0] === 'diff' && path === 'b.txt') return { status: 0, stdout: [
+            'diff --git a/b.txt b/b.txt',
+            '--- a/b.txt',
+            '+++ b/b.txt',
+            '@@ -1 +1 @@',
+            '-b_old',
+            '+b_new',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([
+        { path: 'a.txt', whole_hunks: [0], partial_hunks: {} },
+        { path: 'b.txt', whole_hunks: [0], partial_hunks: {} },
+      ]);
+      assert.ok(appliedStdin.includes('diff --git a/a.txt b/a.txt'));
+      assert.ok(appliedStdin.includes('diff --git a/b.txt b/b.txt'));
+      assert.ok(appliedStdin.includes('-a_old'));
+      assert.ok(appliedStdin.includes('-b_old'));
+    });
+
+    it('handles \\ No newline metadata lines in diff output', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1,2 +1,2 @@',
+            '-old_line',
+            '+new_line',
+            '\\ No newline at end of file',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [0],
+        partial_hunks: {},
+      }]);
+      assert.ok(appliedStdin.includes('-old_line'));
+      assert.ok(appliedStdin.includes('+new_line'));
+      assert.ok(appliedStdin.includes('\\ No newline'));
+    });
+
+    it('generates mini-hunks from context+removed selections', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -5,3 +5,2 @@',
+            ' context',
+            '-removed',
+            '+added',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [],
+        partial_hunks: { 0: [1, 2] },
+      }]);
+      assert.ok(appliedStdin.includes(' context'));
+      assert.ok(appliedStdin.includes('-removed'));
+      assert.ok(appliedStdin.includes('-5,2'));
+      assert.ok(appliedStdin.includes('+5,1'));
+    });
+  });
 });
