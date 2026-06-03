@@ -484,6 +484,15 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     return null;
   }
 
+  override stageSelections(
+    params: OpenVcs.VcsStageSelectionsParams,
+    _context: PluginRuntimeContext,
+  ): null {
+    const git = this.requireGit(params.session_id);
+    git.stageSelections(params.selections);
+    return null;
+  }
+
   override stagePaths(
     params: OpenVcs.VcsStagePathsParams,
     _context: PluginRuntimeContext,

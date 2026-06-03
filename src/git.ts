@@ -698,6 +698,139 @@ export class GitCommand {
     });
   }
 
+  /**
+   * Stages structured hunk/line selections (VCS-agnostic).
+   *
+   * For each file, fetches the worktree diff, extracts the selected hunks/lines,
+   * builds a combined sub-patch, and applies it to the index atomically.
+   */
+  stageSelections(
+    selections: Array<{ path: string; whole_hunks: number[]; partial_hunks: Record<number, number[]> }>,
+  ): void {
+    const filePatches: string[] = [];
+
+    for (const sel of selections) {
+      // Fetch only the worktree diff (not --cached) — cached changes are
+      // already staged and must not be re-applied.
+      const raw = this.runChecked(
+        ['diff', '--no-ext-diff', '--no-color', '--', sel.path],
+        'git-diff-failed',
+      ).stdout;
+      if (!raw.trim()) continue;
+
+      const lines = this.splitDiffLines(raw);
+      if (lines.length === 0) continue;
+
+      const normPath = sel.path.replace(/\\/g, '/');
+
+      // Find the first @@ line to separate prelude from hunks
+      const firstHunk = lines.findIndex(l => l.startsWith('@@'));
+      if (firstHunk < 0) continue;
+
+      const prelude = lines.slice(0, firstHunk);
+      const rest = lines.slice(firstHunk);
+
+      // Build headerExtras: metadata lines that aren't diff --git, ---, or +++
+      const headerExtras = prelude.filter(l =>
+        !!l &&
+        !l.startsWith('diff --git') &&
+        !l.startsWith('--- ') &&
+        !l.startsWith('+++ ')
+      );
+
+      // Locate all hunk @@ positions within rest
+      const starts: number[] = [];
+      for (let i = 0; i < rest.length; i++) {
+        if (rest[i].startsWith('@@')) starts.push(i);
+      }
+      if (starts.length === 0) continue;
+      starts.push(rest.length);
+
+      const isAdd = prelude.some(l => l.startsWith('--- /dev/null'));
+      const isDel = prelude.some(l => l.startsWith('+++ /dev/null'));
+      const wantWhole = new Set(sel.whole_hunks.filter(n => Number.isFinite(n)));
+
+      let out = `diff --git a/${normPath} b/${normPath}\n`;
+      if (headerExtras.length) out += headerExtras.join('\n') + '\n';
+      if (isAdd) out += `--- /dev/null\n+++ b/${normPath}\n`;
+      else if (isDel) out += `--- a/${normPath}\n+++ /dev/null\n`;
+      else out += `--- a/${normPath}\n+++ b/${normPath}\n`;
+
+      for (let h = 0; h < starts.length - 1; h++) {
+        const s = starts[h];
+        const e = starts[h + 1];
+        const block = rest.slice(s, e);
+        const header = block[0] || '';
+        const m = /@@\s*-([0-9]+),?([0-9]*)\s*\+([0-9]+),?([0-9]*)\s*@@/.exec(header);
+        if (!m) continue;
+        const aStart = parseInt(m[1] || '0', 10) || 0;
+        const cStart = parseInt(m[3] || '0', 10) || 0;
+        const content = block.slice(1);
+
+        if (wantWhole.has(h)) {
+          out += header + '\n' + content.join('\n') + '\n';
+          continue;
+        }
+
+        const picksRaw = (sel.partial_hunks && Array.isArray(sel.partial_hunks[h]))
+          ? sel.partial_hunks[h]
+          : (sel.partial_hunks && sel.partial_hunks[h] ? sel.partial_hunks[h] : []);
+        const picksAdj = Array.isArray(picksRaw)
+          ? picksRaw.map((i: number) => i - 1).filter((i: number) => i >= 0 && i < content.length)
+          : [];
+        const pickSet = new Set<number>(picksAdj);
+        if (pickSet.size === 0) continue;
+
+        // prefix counts for old/new positions
+        const prefOld: number[] = new Array(content.length + 1).fill(0);
+        const prefNew: number[] = new Array(content.length + 1).fill(0);
+        for (let i = 0; i < content.length; i++) {
+          const ch = (content[i] || '')[0] || ' ';
+          const isMeta = ch === '\\';
+          prefOld[i + 1] = prefOld[i] + (isMeta ? 0 : (ch === '+' ? 0 : 1));
+          prefNew[i + 1] = prefNew[i] + (isMeta ? 0 : (ch === '-' ? 0 : 1));
+        }
+
+        // Group consecutive selected lines into mini-hunks
+        const sorted = Array.from(pickSet).sort((x, y) => x - y);
+        let group: number[] = [];
+
+        const flush = (): void => {
+          if (group.length === 0) return;
+          const i0 = group[0];
+          const old_start = aStart + prefOld[i0];
+          const new_start = cStart + prefNew[i0];
+          const slice = group.map(i => content[i]);
+          const contentLines = slice.filter(l => (l || '')[0] !== '\\');
+          const metaLines = slice.filter(l => (l || '')[0] === '\\');
+          const old_count = contentLines.filter(l => { const c = (l || '')[0]; return c !== '+'; }).length;
+          const new_count = contentLines.filter(l => { const c = (l || '')[0]; return c !== '-'; }).length;
+          if (old_count === 0 && new_count === 0) { group = []; return; }
+          out += `@@ -${old_start},${old_count} +${new_start},${new_count} @@\n`;
+          out += contentLines.join('\n') + '\n';
+          if (metaLines.length) out += metaLines.join('\n') + '\n';
+          group = [];
+        };
+
+        for (let i = 0; i < sorted.length; i++) {
+          if (group.length === 0) { group.push(sorted[i]); continue; }
+          if (sorted[i] === group[group.length - 1] + 1) group.push(sorted[i]);
+          else { flush(); group.push(sorted[i]); }
+        }
+        flush();
+      }
+
+      filePatches.push(out.trimEnd());
+    }
+
+    if (filePatches.length === 0) return;
+
+    const combinedPatch = filePatches.join('\n') + '\n';
+    this.runChecked(['apply', '--cached', '--unidiff-zero'], 'git-stage-patch-failed', {
+      stdin: combinedPatch,
+    });
+  }
+
   applyReversePatch(patch: string): void {
     this.runChecked(['apply', '-R', '--unidiff-zero'], 'git-apply-reverse-failed', {
       stdin: patch,
