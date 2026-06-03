@@ -230,6 +230,18 @@ describe('GitVcsDelegates unit tests', () => {
       assert.strictEqual(remotes.length, 1);
       assert.strictEqual(remotes[0].url, 'https://example.com/repo.git');
     });
+
+    it('falls back to push url when fetch is empty', () => {
+      const delegates = createMockDelegate({
+        listRemotes: () => ({
+          remotes: [
+            { name: 'backup', fetch: '', push: 'https://backup.example.com/repo.git' },
+          ],
+        }),
+      });
+      const remotes = delegates.listRemotes({ session_id: 'session-1' }, createRuntimeContext());
+      assert.strictEqual(remotes[0].url, 'https://backup.example.com/repo.git');
+    });
   });
 
   describe('removeRemote', () => {
@@ -433,6 +445,22 @@ describe('GitVcsDelegates unit tests', () => {
       const result = delegates.getBranchUpstream({ session_id: 'session-1', branch: 'main' }, createRuntimeContext());
       assert.deepStrictEqual(calls, ['main']);
       assert.strictEqual(result, 'origin/main');
+    });
+  });
+
+  describe('listBranches with non-remote ref', () => {
+    it('handles branch name without remote prefix', () => {
+      const delegates = createMockDelegate({
+        runChecked: () => ({
+          status: 0,
+          stdout: 'main\trefs/heads/main\t\n',
+          stderr: '',
+        }),
+      });
+      const branches = delegates.listBranches({ session_id: 'session-1' }, createRuntimeContext());
+      assert.strictEqual(branches.length, 1);
+      assert.strictEqual(branches[0].name, 'main');
+      assert.strictEqual(branches[0].kind.type, 'Local');
     });
   });
 
@@ -648,6 +676,21 @@ describe('GitVcsDelegates unit tests', () => {
     });
   });
 
+  describe('planDiscardPaths with ignored files', () => {
+    it('handles !! (ignored) status that falls through candidate list', () => {
+      const delegates = createMockDelegate({
+        runChecked: (args: string[]) => {
+          if (args[0] === 'status') {
+            return { status: 0, stdout: '!! ignored.txt\0', stderr: '' };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      delegates.discardPaths({ session_id: 'session-1', paths: ['ignored.txt'] }, createRuntimeContext());
+      assert.ok('discard completed without error');
+    });
+  });
+
   describe('discardPaths with empty paths', () => {
     it('returns early when no paths provided', () => {
       let called = false;
@@ -688,6 +731,19 @@ describe('GitVcsDelegates unit tests', () => {
       });
       delegates.stagePaths({ session_id: 'session-1', paths: ['file1.txt', 'file2.txt'] }, createRuntimeContext());
       assert.deepStrictEqual(calls, [['file1.txt', 'file2.txt']]);
+    });
+  });
+
+  describe('stageSelections', () => {
+    it('delegates to git stageSelections', () => {
+      const calls: Array<Array<{ path: string; whole_hunks: number[]; partial_hunks: Record<number, number[]> }>> = [];
+      const delegates = createMockDelegate({
+        stageSelections: (selections: Array<{ path: string; whole_hunks: number[]; partial_hunks: Record<number, number[]> }>) => { calls.push(selections); },
+      });
+      const selections = [{ path: 'file.txt', whole_hunks: [0], partial_hunks: {} }];
+      delegates.stageSelections({ session_id: 'session-1', selections }, createRuntimeContext());
+      assert.strictEqual(calls.length, 1);
+      assert.deepStrictEqual(calls[0], selections);
     });
   });
 

@@ -4,6 +4,9 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { GitCommand } from '../src/git.js';
 import type { RunGitOptions } from '../src/plugin-types.js';
@@ -434,6 +437,107 @@ describe('GitCommand advanced', () => {
     });
   });
 
+  describe('isBinaryBuffer', () => {
+    it('returns false for empty buffer', () => {
+      const repoPath = mkdtempSync(join(tmpdir(), 'openvcs-git-binary-empty-'));
+      try {
+        writeFileSync(join(repoPath, 'empty.txt'), '');
+        const git = new GitCommand(repoPath);
+        git.run = ((args: string[]) => {
+          if (args[0] === 'status') {
+            return { status: 0, stdout: '## main\0?? empty.txt\0', stderr: '' };
+          }
+          return { status: 1, stdout: '', stderr: '' };
+        }) as GitCommand['run'];
+        const status = git.status();
+        const emptyFile = status.payload.files.find(f => f.path === 'empty.txt');
+        assert.strictEqual(emptyFile?.binary, false);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+
+    it('returns false for UTF-16 LE BOM content', () => {
+      const repoPath = mkdtempSync(join(tmpdir(), 'openvcs-git-binary-utf16-'));
+      try {
+        const utf16leBom = Buffer.from([0xff, 0xfe, 0x68, 0x00, 0x65, 0x00, 0x6c, 0x00, 0x6c, 0x00, 0x6f, 0x00]);
+        writeFileSync(join(repoPath, 'utf16.txt'), utf16leBom);
+        const git = new GitCommand(repoPath);
+        git.run = ((args: string[]) => {
+          if (args[0] === 'status') {
+            return { status: 0, stdout: '## main\0?? utf16.txt\0', stderr: '' };
+          }
+          return { status: 1, stdout: '', stderr: '' };
+        }) as GitCommand['run'];
+        const status = git.status();
+        const utf16File = status.payload.files.find(f => f.path === 'utf16.txt');
+        assert.strictEqual(utf16File?.binary, false);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+
+    it('returns false for UTF-16 BE BOM content', () => {
+      const repoPath = mkdtempSync(join(tmpdir(), 'openvcs-git-binary-utf16be-'));
+      try {
+        const utf16beBom = Buffer.from([0xfe, 0xff, 0x00, 0x68, 0x00, 0x65, 0x00, 0x6c, 0x00, 0x6c, 0x00, 0x6f]);
+        writeFileSync(join(repoPath, 'utf16be.txt'), utf16beBom);
+        const git = new GitCommand(repoPath);
+        git.run = ((args: string[]) => {
+          if (args[0] === 'status') {
+            return { status: 0, stdout: '## main\0?? utf16be.txt\0', stderr: '' };
+          }
+          return { status: 1, stdout: '', stderr: '' };
+        }) as GitCommand['run'];
+        const status = git.status();
+        const utf16File = status.payload.files.find(f => f.path === 'utf16be.txt');
+        assert.strictEqual(utf16File?.binary, false);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('diffFile binary markers', () => {
+    it('marks binary true when git diff emits binary patch markers', () => {
+      const git = createMockGit({
+        runChecked: (a: string[]) => {
+          if (a.includes('--cached')) {
+            return { status: 0, stdout: 'Binary files a/file.bin and b/file.bin differ\n', stderr: '' };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      const diff = git.diffFile('file.bin');
+      assert.strictEqual(diff.binary, true);
+      assert.deepStrictEqual(diff.lines, ['Binary files a/file.bin and b/file.bin differ']);
+    });
+
+    it('marks binary true for git binary patch literal output', () => {
+      const git = createMockGit({
+        runChecked: (a: string[]) => {
+          if (a.includes('--cached')) {
+            return { status: 0, stdout: 'GIT binary patch\nliteral 10\n', stderr: '' };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      const diff = git.diffFile('file.bin');
+      assert.strictEqual(diff.binary, true);
+    });
+
+    it('returns null binary flag for empty path (defensive guard)', () => {
+      const git = createMockGit({
+        runChecked: () => ({ status: 0, stdout: '', stderr: '' }),
+      });
+      // Pass empty path → readWorktreeBinaryFlag gets empty trimmedPath → returns null
+      // diffFile: lines=[] → binaryFromOutput=false → lines.length=0 → readWorktreeBinaryFlag('')
+      // Since the path is empty, readWorktreeBinaryFlag returns null
+      const diff = git.diffFile('');
+      assert.strictEqual(diff.binary, null);
+    });
+  });
+
   describe('writeMergeResult', () => {
     it('hashes content and updates index', () => {
       const calls: string[][] = [];
@@ -506,6 +610,107 @@ describe('GitCommand advanced', () => {
       assert.strictEqual(entries[1].state, 'clean');
       assert.strictEqual(entries[1].url, 'https://example.com/repo.git');
       assert.strictEqual(entries[1].branch, 'main');
+    });
+
+    it('parses uninitialized and conflicted submodule states', () => {
+      const git = createMockGit({
+        run: (args: string[]) => {
+          if (args.includes('-f') && args.includes('.gitmodules')) {
+            return {
+              status: 0,
+              stdout: 'submodule.libs/uninit.path\nlibs/uninit\0submodule.libs/conflict.path\nlibs/conflict\0',
+              stderr: '',
+            };
+          }
+          if (args[0] === 'submodule' && args[1] === 'status') {
+            return {
+              status: 0,
+              stdout: '-abc1234567 libs/uninit\nUdef4567890 libs/conflict\n',
+              stderr: '',
+            };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      const entries = git.listSubmodules();
+      assert.strictEqual(entries.length, 2);
+      assert.strictEqual(entries[0].path, 'libs/conflict');
+      assert.strictEqual(entries[0].state, 'conflicted');
+      assert.strictEqual(entries[1].path, 'libs/uninit');
+      assert.strictEqual(entries[1].state, 'uninitialized');
+    });
+
+    it('skips submodule status lines with no path', () => {
+      const git = createMockGit({
+        run: (args: string[]) => {
+          if (args.includes('-f') && args.includes('.gitmodules')) {
+            return { status: 0, stdout: '', stderr: '' };
+          }
+          if (args[0] === 'submodule' && args[1] === 'status') {
+            return { status: 0, stdout: ' abc1234567\n', stderr: '' };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      const entries = git.listSubmodules();
+      assert.strictEqual(entries.length, 0);
+    });
+
+    it('handles slash-only path for name fallback', () => {
+      const git = createMockGit({
+        run: (args: string[]) => {
+          if (args.includes('-f') && args.includes('.gitmodules')) {
+            return { status: 0, stdout: '', stderr: '' };
+          }
+          if (args[0] === 'submodule' && args[1] === 'status') {
+            return { status: 0, stdout: ' abc1234567 /\n', stderr: '' };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      const entries = git.listSubmodules();
+      assert.strictEqual(entries.length, 1);
+      assert.strictEqual(entries[0].name, '/');
+    });
+
+    it('skips gitmodules entries without newline separator', () => {
+      const git = createMockGit({
+        run: (args: string[]) => {
+          if (args.includes('-f') && args.includes('.gitmodules')) {
+            return {
+              status: 0,
+              stdout: 'submodule.libs/repo.path\0',
+              stderr: '',
+            };
+          }
+          if (args[0] === 'submodule' && args[1] === 'status') {
+            return { status: 0, stdout: '', stderr: '' };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      const entries = git.listSubmodules();
+      assert.strictEqual(entries.length, 0);
+    });
+
+    it('skips gitmodules entries with non-submodule keys', () => {
+      const git = createMockGit({
+        run: (args: string[]) => {
+          if (args.includes('-f') && args.includes('.gitmodules')) {
+            return {
+              status: 0,
+              stdout: 'core.bare\ntrue\0',
+              stderr: '',
+            };
+          }
+          if (args[0] === 'submodule' && args[1] === 'status') {
+            return { status: 0, stdout: '', stderr: '' };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      const entries = git.listSubmodules();
+      assert.strictEqual(entries.length, 0);
     });
   });
 
@@ -733,5 +938,366 @@ describe('GitCommand advanced', () => {
       assert.ok(appliedStdin.includes('-5,2'));
       assert.ok(appliedStdin.includes('+5,1'));
     });
+
+    it('handles non-consecutive partial line selections (gap triggers flush)', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1,4 +1,4 @@',
+            ' line1',
+            '-old2',
+            '+new2',
+            '-old4',
+            '+new4',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      // Select lines 2 and 4 (1-based UI indices), skipping line 3
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [],
+        partial_hunks: { 0: [2, 4] },
+      }]);
+      // Should produce two mini-hunks: one for line 2, one for line 4
+      assert.ok(appliedStdin.includes('-old2'));
+      assert.ok(appliedStdin.includes('-old4'));
+    });
+
+    it('handles partial_hunks where value is not an array (falls through to empty picksAdj)', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1,2 +1,2 @@',
+            '-old1',
+            '+new1',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      // partial_hunks[h] exists but is a string, not an array → picksRaw is string
+      // → Array.isArray(picksRaw) is false → picksAdj becomes []
+      // → pickSet.size === 0 → hunk is skipped
+      // Header still included but no hunks
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [],
+        partial_hunks: { 0: 'not-an-array' as never },
+      }]);
+      // Only header present, no hunk content
+      assert.ok(appliedStdin.startsWith('diff --git a/file.txt b/file.txt'));
+      assert.ok(!appliedStdin.includes('@@'));
+    });
+
+    it('handles header extras line filtering in prelude', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            'old mode 100644',
+            'new mode 100755',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1 +1 @@',
+            '-old',
+            '+new',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [0],
+        partial_hunks: {},
+      }]);
+      assert.ok(appliedStdin.includes('old mode 100644'));
+      assert.ok(appliedStdin.includes('+new'));
+    });
+
+    it('handles add-file diff (--- /dev/null)', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/new.txt b/new.txt',
+            'new mode 100644',
+            '--- /dev/null',
+            '+++ b/new.txt',
+            '@@ -0,0 +1 @@',
+            '+new file',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'new.txt',
+        whole_hunks: [0],
+        partial_hunks: {},
+      }]);
+      assert.ok(appliedStdin.includes('--- /dev/null'));
+      assert.ok(appliedStdin.includes('+new file'));
+    });
+
+    it('handles delete-file diff (+++ /dev/null)', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/deleted.txt b/deleted.txt',
+            '--- a/deleted.txt',
+            '+++ /dev/null',
+            '@@ -1 +0,0 @@',
+            '-old content',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'deleted.txt',
+        whole_hunks: [0],
+        partial_hunks: {},
+      }]);
+      assert.ok(appliedStdin.includes('+++ /dev/null'));
+      assert.ok(appliedStdin.includes('-old content'));
+    });
+
+    it('skips hunk when selected lines are only meta lines (old_count=0, new_count=0)', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1,2 +1,2 @@',
+            '-old',
+            '+new',
+            '\\ No newline at end of file',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      // Select only the meta line (1-indexed: 3), which is the \ No newline
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [],
+        partial_hunks: { 0: [3] },
+      }]);
+      // Meta line filtered to metaLines → contentLines empty
+      // old_count=0, new_count=0 → bail out, only header present
+      assert.ok(appliedStdin.startsWith('diff --git a/file.txt b/file.txt'));
+      assert.ok(!appliedStdin.includes('@@'));
+    });
+
+    it('filters non-finite numbers from whole_hunks', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1 +1 @@',
+            '-old',
+            '+new',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      // Only finite hunk index 0 is included; NaN and Infinity filtered out
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [0, NaN, Infinity],
+        partial_hunks: {},
+      }]);
+      assert.ok(appliedStdin.includes('-old'));
+    });
+
+    it('includes meta lines when selected alongside regular lines via partial_hunks', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1,2 +1,2 @@',
+            '-old',
+            '+new',
+            '\\ No newline at end of file',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      // Select both content lines and the meta line (1-indexed: 1, 2, 3)
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [],
+        partial_hunks: { 0: [1, 2, 3] },
+      }]);
+      assert.ok(appliedStdin.includes('-old'));
+      assert.ok(appliedStdin.includes('+new'));
+      assert.ok(appliedStdin.includes('No newline'));
+    });
+
+    it('skips hunks with malformed @@ headers', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@malformed@@',
+            '-bad_old',
+            '+bad_new',
+            '@@ -4 +4 @@',
+            '-good_old',
+            '+good_new',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [0, 1],
+        partial_hunks: {},
+      }]);
+      // First hunk has malformed header → skipped via `if (!m) continue;`
+      // Second hunk is valid → should be in output
+      assert.ok(appliedStdin.includes('-good_old'));
+      assert.ok(!appliedStdin.includes('-bad_old'));
+    });
+
+    it('triggers prefix-sum fallback with empty line via partial hunks', () => {
+      let appliedStdin = '';
+      const git = createMockGit({
+        runChecked: ((args: string[], _errorCode: string, options?: any) => {
+          if (args.includes('apply')) appliedStdin = options?.stdin ?? '';
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+            '@@ -1,2 +1,2 @@',
+            '',
+            '-old',
+            '+new',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      // Hunk content has ['', '-old', '+new'] → content[0] is ''
+      // (content[0] || '') => '', ''[0] => undefined, || ' ' => ' '
+      // Must use partial_hunks to reach prefix-sum code (lines 785-791)
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [],
+        partial_hunks: { 0: [1, 2, 3] },
+      }]);
+      assert.ok(appliedStdin.includes('-old'));
+    });
+
+    it('skips file with diff header but no hunks (firstHunk < 0)', () => {
+      let runCount = 0;
+      const git = createMockGit({
+        runChecked: ((args: string[]) => {
+          runCount++;
+          if (args[0] === 'diff') return { status: 0, stdout: [
+            'diff --git a/file.txt b/file.txt',
+            '--- a/file.txt',
+            '+++ b/file.txt',
+          ].join('\n'), stderr: '' };
+          return { status: 0, stdout: '', stderr: '' };
+        }) as GitCommand['runChecked'],
+      });
+      git.stageSelections([{
+        path: 'file.txt',
+        whole_hunks: [0],
+        partial_hunks: {},
+      }]);
+      // Only diff call made, no apply (since no hunks in file)
+      assert.strictEqual(runCount, 1);
+    });
+  });
+});
+
+describe('stagePatch edge cases continued', () => {
+  it('deduplicates patches when same path appears multiple times', () => {
+    const patch = [
+      'diff --git a/a.txt b/a.txt',
+      '--- a/a.txt',
+      '+++ a/a.txt',
+      '@@ -1 +1 @@',
+      '-old_a1',
+      '+new_a1',
+      'diff --git a/a.txt b/a.txt',
+      '--- a/a.txt',
+      '+++ a/a.txt',
+      '@@ -1 +1 @@',
+      '-old_a2',
+      '+new_a2',
+    ].join('\n');
+    let stdin = '';
+    const git = createMockGit({
+      run: () => ({ status: 0, stdout: 'abc123\n', stderr: '' }),
+      runChecked: ((_args, _errorCode, options) => {
+        stdin = options?.stdin ?? '';
+        return { status: 0, stdout: '', stderr: '' };
+      }) as GitCommand['runChecked'],
+    });
+    git.stagePatch(patch);
+    // Dedup keeps only the second occurrence
+    assert.ok(stdin.includes('-old_a2'));
+    assert.ok(!stdin.includes('-old_a1'));
+  });
+
+  it('handles diff --git header without b/ marker', () => {
+    // When diff --git header doesn't contain ' b/', currentPath is null
+    // and the flush function marks the section as unparseable
+    const patch = [
+      'diff --git a/file.txt b/file.txt',
+      '--- a/file.txt',
+      '+++ b/file.txt',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+      'diff --git a/wrong.txt',  // No ' b/' marker
+      '--- a/wrong.txt',
+      '+++ b/wrong.txt',
+      '@@ -1 +1 @@',
+      '-wrong_old',
+      '+wrong_new',
+    ].join('\n');
+    let stdin = '';
+    const git = createMockGit({
+      run: () => ({ status: 0, stdout: 'abc123\n', stderr: '' }),
+      runChecked: ((_args, _errorCode, options) => {
+        stdin = options?.stdin ?? '';
+        return { status: 0, stdout: '', stderr: '' };
+      }) as GitCommand['runChecked'],
+    });
+    git.stagePatch(patch);
+    // Since one section is unparseable, unparseable=true, dedup is skipped
+    // Original patch should be passed through as-is
+    assert.ok(stdin.includes('-old'));
+    assert.ok(stdin.includes('-wrong_old'));
   });
 });
