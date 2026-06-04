@@ -147,6 +147,7 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
       staging: true,
       push_pull: true,
       fast_forward: true,
+      merge_strategies: true,
     };
   }
 
@@ -592,7 +593,12 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    git.mergeIntoCurrent(asTrimmedString(params.name));
+    const rawStrategy = asTrimmedString(params.strategy);
+    const strategy = rawStrategy && !['merge', 'squash', 'rebase'].includes(rawStrategy)
+      ? (() => { throw pluginError('vcs-merge-invalid-strategy', `Unknown merge strategy '${rawStrategy}'. Must be 'merge', 'squash', or 'rebase'.`); })()
+      : (rawStrategy || undefined);
+    const message = asTrimmedString(params.message) || undefined;
+    git.mergeIntoCurrent(asTrimmedString(params.name), strategy, message);
     return null;
   }
 

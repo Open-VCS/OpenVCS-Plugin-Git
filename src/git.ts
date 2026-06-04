@@ -870,8 +870,21 @@ export class GitCommand {
     this.runChecked(['config', '--local', 'user.email', email], 'git-identity-set-failed');
   }
 
-  mergeIntoCurrent(branch: string): void {
-    this.runChecked(['merge', branch], 'git-merge-failed');
+  mergeIntoCurrent(branch: string, strategy?: string, message?: string): void {
+    switch (strategy) {
+      case 'squash': {
+        this.runChecked(['merge', '--squash', branch], 'git-merge-failed');
+        const commitArgs = ['commit', '-m', message ?? `Merge branch '${branch}'`];
+        this.runChecked(commitArgs, 'git-merge-failed');
+        break;
+      }
+      case 'rebase':
+        this.runChecked(['rebase', branch], 'git-rebase-failed');
+        break;
+      default:
+        this.runChecked(['merge', branch], 'git-merge-failed');
+        break;
+    }
   }
 
   mergeAbort(): void {

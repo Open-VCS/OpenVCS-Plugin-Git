@@ -113,7 +113,7 @@ describe('GitCommand advanced', () => {
   });
 
   describe('merge operations', () => {
-    it('mergeIntoCurrent passes branch name', () => {
+    it('mergeIntoCurrent passes branch name with default strategy', () => {
       const { git, args } = captureRun();
       git.runChecked = ((a: string[]) => {
         args.push(a);
@@ -121,6 +121,48 @@ describe('GitCommand advanced', () => {
       }) as GitCommand['runChecked'];
       git.mergeIntoCurrent('feature');
       assert.deepStrictEqual(args[0], ['merge', 'feature']);
+    });
+
+    it('mergeIntoCurrent passes branch name with explicit merge strategy', () => {
+      const { git, args } = captureRun();
+      git.runChecked = ((a: string[]) => {
+        args.push(a);
+        return { status: 0, stdout: '', stderr: '' };
+      }) as GitCommand['runChecked'];
+      git.mergeIntoCurrent('feature', 'merge');
+      assert.deepStrictEqual(args[0], ['merge', 'feature']);
+    });
+
+    it('mergeIntoCurrent uses --squash and commits with squash strategy', () => {
+      const { git, args } = captureRun();
+      git.runChecked = ((a: string[]) => {
+        args.push(a);
+        return { status: 0, stdout: '', stderr: '' };
+      }) as GitCommand['runChecked'];
+      git.mergeIntoCurrent('feature', 'squash', 'Squash msg');
+      assert.deepStrictEqual(args[0], ['merge', '--squash', 'feature']);
+      assert.deepStrictEqual(args[1], ['commit', '-m', 'Squash msg']);
+    });
+
+    it('mergeIntoCurrent uses --squash with default message when none provided', () => {
+      const { git, args } = captureRun();
+      git.runChecked = ((a: string[]) => {
+        args.push(a);
+        return { status: 0, stdout: '', stderr: '' };
+      }) as GitCommand['runChecked'];
+      git.mergeIntoCurrent('feature', 'squash');
+      assert.deepStrictEqual(args[0], ['merge', '--squash', 'feature']);
+      assert.deepStrictEqual(args[1], ['commit', '-m', "Merge branch 'feature'"]);
+    });
+
+    it('mergeIntoCurrent uses rebase strategy', () => {
+      const { git, args } = captureRun();
+      git.runChecked = ((a: string[]) => {
+        args.push(a);
+        return { status: 0, stdout: '', stderr: '' };
+      }) as GitCommand['runChecked'];
+      git.mergeIntoCurrent('feature', 'rebase');
+      assert.deepStrictEqual(args[0], ['rebase', 'feature']);
     });
 
     it('mergeAbort passes correct args', () => {

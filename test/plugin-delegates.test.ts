@@ -72,6 +72,7 @@ describe('GitVcsDelegates unit tests', () => {
       assert.strictEqual(caps.branches, true);
       assert.strictEqual(caps.staging, true);
       assert.strictEqual(caps.push_pull, true);
+      assert.strictEqual(caps.merge_strategies, true);
     });
   });
 
@@ -476,13 +477,59 @@ describe('GitVcsDelegates unit tests', () => {
   });
 
   describe('merge operations', () => {
-    it('mergeIntoCurrent delegates to git', () => {
-      const calls: string[] = [];
+    it('mergeIntoCurrent delegates to git with default strategy', () => {
+      const calls: Array<{ name: string; strategy?: string; message?: string }> = [];
       const delegates = createMockDelegate({
-        mergeIntoCurrent: (name: string) => { calls.push(name); },
+        mergeIntoCurrent: (name: string, strategy?: string, message?: string) => {
+          calls.push({ name, strategy, message });
+        },
       });
       delegates.mergeIntoCurrent({ session_id: 'session-1', name: 'feature' }, createRuntimeContext());
-      assert.deepStrictEqual(calls, ['feature']);
+      assert.deepStrictEqual(calls, [{ name: 'feature', strategy: undefined, message: undefined }]);
+    });
+
+    it('mergeIntoCurrent passes strategy and message', () => {
+      const calls: Array<{ name: string; strategy?: string; message?: string }> = [];
+      const delegates = createMockDelegate({
+        mergeIntoCurrent: (name: string, strategy?: string, message?: string) => {
+          calls.push({ name, strategy, message });
+        },
+      });
+      delegates.mergeIntoCurrent(
+        { session_id: 'session-1', name: 'feature', strategy: 'squash', message: 'Squash msg' },
+        createRuntimeContext(),
+      );
+      assert.deepStrictEqual(calls, [{ name: 'feature', strategy: 'squash', message: 'Squash msg' }]);
+    });
+
+    it('mergeIntoCurrent passes rebase strategy', () => {
+      const calls: Array<{ name: string; strategy?: string; message?: string }> = [];
+      const delegates = createMockDelegate({
+        mergeIntoCurrent: (name: string, strategy?: string, message?: string) => {
+          calls.push({ name, strategy, message });
+        },
+      });
+      delegates.mergeIntoCurrent(
+        { session_id: 'session-1', name: 'feature', strategy: 'rebase' },
+        createRuntimeContext(),
+      );
+      assert.deepStrictEqual(calls, [{ name: 'feature', strategy: 'rebase', message: undefined }]);
+    });
+
+    it('mergeIntoCurrent throws for invalid strategy', () => {
+      const delegates = createMockDelegate({
+        mergeIntoCurrent: () => {},
+      });
+      assert.throws(
+        () => delegates.mergeIntoCurrent(
+          { session_id: 'session-1', name: 'feature', strategy: 'invalid' },
+          createRuntimeContext(),
+        ),
+        (err: Error) => {
+          assert.match(err.message, /Unknown merge strategy .invalid./);
+          return true;
+        },
+      );
     });
 
     it('mergeAbort delegates to git', () => {
