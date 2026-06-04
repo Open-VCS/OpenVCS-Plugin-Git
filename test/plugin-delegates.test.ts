@@ -72,7 +72,7 @@ describe('GitVcsDelegates unit tests', () => {
       assert.strictEqual(caps.branches, true);
       assert.strictEqual(caps.staging, true);
       assert.strictEqual(caps.push_pull, true);
-      assert.strictEqual(caps.merge_strategies, true);
+      assert.deepStrictEqual(caps.merge_strategies, ['merge', 'squash', 'rebase']);
     });
   });
 

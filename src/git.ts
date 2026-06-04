@@ -879,7 +879,7 @@ export class GitCommand {
         break;
       }
       case 'rebase':
-        this.runChecked(['rebase', branch], 'git-rebase-failed');
+        this.runChecked(['merge', '--rebase', branch], 'git-merge-failed');
         break;
       default:
         this.runChecked(['merge', branch], 'git-merge-failed');

@@ -147,7 +147,7 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
       staging: true,
       push_pull: true,
       fast_forward: true,
-      merge_strategies: true,
+      merge_strategies: ['merge', 'squash', 'rebase'],
     };
   }
 

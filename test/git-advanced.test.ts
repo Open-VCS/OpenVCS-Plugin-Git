@@ -162,7 +162,7 @@ describe('GitCommand advanced', () => {
         return { status: 0, stdout: '', stderr: '' };
       }) as GitCommand['runChecked'];
       git.mergeIntoCurrent('feature', 'rebase');
-      assert.deepStrictEqual(args[0], ['rebase', 'feature']);
+      assert.deepStrictEqual(args[0], ['merge', '--rebase', 'feature']);
     });
 
     it('mergeAbort passes correct args', () => {
