@@ -27,7 +27,6 @@ import {
 export interface FetchOptions {
   remote?: string;
   refspec?: string;
-  opts?: { prune?: boolean };
 }
 
 export interface PushOptions {

@@ -391,7 +391,7 @@ describe('GitCommand', () => {
         args.push(a);
         return { status: 0, stdout: '', stderr: '' };
       }) as GitCommand['runChecked'];
-      const opts: FetchOptions = { remote: 'origin', refspec: 'main', opts: { prune: true } };
+      const opts: FetchOptions = { remote: 'origin', refspec: 'main' };
       git.fetch(opts);
       assert.deepStrictEqual(args[0], ['fetch', '--prune', 'origin', 'main']);
     });

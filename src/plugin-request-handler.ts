@@ -337,11 +337,9 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    const options = asRecord(params.opts);
     git.fetch({
       remote: asTrimmedString(params.remote) || undefined,
       refspec: asTrimmedString(params.refspec) || undefined,
-      opts: { prune: options.prune === true },
     });
     return null;
   }

@@ -257,7 +257,7 @@ describe('GitVcsDelegates unit tests', () => {
   });
 
   describe('fetch', () => {
-    it('delegates to git fetch with options', () => {
+    it('delegates to git fetch without prune options', () => {
       const calls: FetchOptions[] = [];
       const delegates = createMockDelegate({
         fetch: (opts: FetchOptions) => {
@@ -265,10 +265,9 @@ describe('GitVcsDelegates unit tests', () => {
           return { status: 0, stdout: '', stderr: '' };
         },
       });
-      delegates.fetch({ session_id: 'session-1', remote: 'origin', refspec: 'main', opts: { prune: true } }, createRuntimeContext());
+      delegates.fetch({ session_id: 'session-1', remote: 'origin', refspec: 'main' }, createRuntimeContext());
       assert.strictEqual(calls.length, 1);
       assert.strictEqual(calls[0].remote, 'origin');
-      assert.strictEqual(calls[0].opts?.prune, true);
     });
 
     it('coerces empty fetch options to undefined values', () => {
@@ -280,9 +279,9 @@ describe('GitVcsDelegates unit tests', () => {
         },
       });
 
-      delegates.fetch({ session_id: 'session-1', remote: ' ', refspec: '', opts: {} }, createRuntimeContext());
+      delegates.fetch({ session_id: 'session-1', remote: ' ', refspec: '' }, createRuntimeContext());
 
-      assert.deepStrictEqual(calls, [{ remote: undefined, refspec: undefined, opts: { prune: false } }]);
+      assert.deepStrictEqual(calls, [{ remote: undefined, refspec: undefined }]);
     });
   });
 
