@@ -53,12 +53,7 @@ function pushOptionalArg(args: string[], value: unknown): void {
 
 /** Builds `git fetch` arguments while omitting empty optional values. */
 export function buildFetchArgs(params: RequestParams): string[] {
-  const args = ['fetch'];
-  const options = asRecord(params.opts);
-
-  if (options.prune === true) {
-    args.push('--prune');
-  }
+  const args = ['fetch', '--prune'];
 
   pushOptionalArg(args, params.remote);
   pushOptionalArg(args, params.refspec);
