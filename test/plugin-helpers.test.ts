@@ -110,12 +110,13 @@ describe('Git plugin helpers', () => {
 
   describe('network command argument building', () => {
     it('builds fetch with no optional arguments', () => {
-      assert.deepStrictEqual(buildFetchArgs({}), ['fetch']);
+      assert.deepStrictEqual(buildFetchArgs({}), ['fetch', '--prune']);
     });
 
     it('builds fetch with remote only', () => {
       assert.deepStrictEqual(buildFetchArgs({ remote: 'origin' }), [
         'fetch',
+        '--prune',
         'origin',
       ]);
     });
@@ -123,13 +124,13 @@ describe('Git plugin helpers', () => {
     it('builds fetch with remote and refspec', () => {
       assert.deepStrictEqual(
         buildFetchArgs({ remote: 'origin', refspec: 'main' }),
-        ['fetch', 'origin', 'main'],
+        ['fetch', '--prune', 'origin', 'main'],
       );
     });
 
-    it('builds fetch with prune enabled', () => {
+    it('builds fetch with prune always enabled', () => {
       assert.deepStrictEqual(
-        buildFetchArgs({ opts: { prune: true }, remote: 'origin' }),
+        buildFetchArgs({ remote: 'origin' }),
         ['fetch', '--prune', 'origin'],
       );
     });

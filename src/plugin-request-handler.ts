@@ -147,6 +147,7 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
       staging: true,
       push_pull: true,
       fast_forward: true,
+      merge_strategies: ['merge', 'squash', 'rebase'],
     };
   }
 
@@ -336,11 +337,9 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    const options = asRecord(params.opts);
     git.fetch({
       remote: asTrimmedString(params.remote) || undefined,
       refspec: asTrimmedString(params.refspec) || undefined,
-      opts: { prune: options.prune === true },
     });
     return null;
   }
@@ -592,7 +591,12 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     _context: PluginRuntimeContext,
   ): null {
     const git = this.requireGit(params.session_id);
-    git.mergeIntoCurrent(asTrimmedString(params.name));
+    const rawStrategy = asTrimmedString(params.strategy);
+    const strategy = rawStrategy && !['merge', 'squash', 'rebase'].includes(rawStrategy)
+      ? (() => { throw pluginError('vcs-merge-invalid-strategy', `Unknown merge strategy '${rawStrategy}'. Must be 'merge', 'squash', or 'rebase'.`); })()
+      : (rawStrategy || undefined);
+    const message = asTrimmedString(params.message) || undefined;
+    git.mergeIntoCurrent(asTrimmedString(params.name), strategy, message);
     return null;
   }
 

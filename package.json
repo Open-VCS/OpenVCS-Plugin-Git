@@ -1,6 +1,6 @@
 {
   "name": "@openvcs/git-plugin",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Git VCS backend plugin for OpenVCS",
   "author": "OpenVCS Contributors",
   "license": "GPL-3.0-or-later",
