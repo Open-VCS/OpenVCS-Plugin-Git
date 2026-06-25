@@ -884,4 +884,78 @@ describe('GitVcsDelegates unit tests', () => {
       assert.ok(infoCalls.some((c) => c.includes('Resolving')));
     });
   });
+
+  describe('validateUrl', () => {
+    it('accepts http URL', () => {
+      const delegates = createMockDelegate({});
+      const result = delegates.validateUrl({ url: 'https://github.com/user/repo.git' }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, true);
+    });
+
+    it('accepts ssh URL', () => {
+      const delegates = createMockDelegate({});
+      const result = delegates.validateUrl({ url: 'ssh://git@github.com/user/repo.git' }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, true);
+    });
+
+    it('accepts scp-like URL', () => {
+      const delegates = createMockDelegate({});
+      const result = delegates.validateUrl({ url: 'git@github.com:user/repo.git' }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, true);
+    });
+
+    it('accepts git:// URL', () => {
+      const delegates = createMockDelegate({});
+      const result = delegates.validateUrl({ url: 'git://github.com/user/repo.git' }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, true);
+    });
+
+    it('rejects empty URL', () => {
+      const delegates = createMockDelegate({});
+      const result = delegates.validateUrl({ url: '' }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, false);
+      assert.ok(result.reason);
+    });
+
+    it('rejects unrecognized URL', () => {
+      const delegates = createMockDelegate({});
+      const result = delegates.validateUrl({ url: 'ftp://example.com/repo' }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, false);
+      assert.ok(result.reason);
+    });
+  });
+
+  describe('validatePath', () => {
+    it('accepts valid git repo path', () => {
+      const repoPath = createTempRepo();
+      const delegates = createDelegateDeps(repoPath);
+      const delegate = new GitVcsDelegates(delegates);
+      const result = delegate.validatePath({ path: repoPath }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, true);
+      rmSync(repoPath, { recursive: true, force: true });
+    });
+
+    it('rejects empty path', () => {
+      const delegates = createMockDelegate({});
+      const result = delegates.validatePath({ path: '' }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, false);
+      assert.ok(result.reason);
+    });
+
+    it('rejects non-existent path', () => {
+      const delegates = createMockDelegate({});
+      const result = delegates.validatePath({ path: '/nonexistent/path' }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, false);
+      assert.ok(result.reason);
+    });
+
+    it('rejects path without .git directory', () => {
+      const tmpPath = mkdtempSync(join(tmpdir(), 'openvcs-git-no-git-'));
+      const delegates = createMockDelegate({});
+      const result = delegates.validatePath({ path: tmpPath }, {} as PluginRuntimeContext);
+      assert.strictEqual(result.ok, false);
+      assert.ok(result.reason?.includes('.git'));
+      rmSync(tmpPath, { recursive: true, force: true });
+    });
+  });
 });
