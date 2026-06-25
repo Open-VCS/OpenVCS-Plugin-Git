@@ -1,6 +1,10 @@
 // Copyright © 2025-2026 OpenVCS Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import {
   VcsDelegateBase,
   pluginError,
@@ -754,5 +758,58 @@ export class GitVcsDelegates extends VcsDelegateBase<GitRuntimeDependencies> {
     const git = this.requireGit(params.session_id);
     git.revertCommit(asTrimmedString(params.commit), params.no_edit);
     return null;
+  }
+
+  override validateUrl(
+    params: OpenVcs.VcsValidateUrlParams,
+    _context: PluginRuntimeContext,
+  ): OpenVcs.VcsValidationResult {
+    const url = asTrimmedString(params.url);
+    if (!url) {
+      return { ok: false, reason: 'URL is required' };
+    }
+
+    // Check for common Git URL patterns
+    const isHttp = url.startsWith('http://') || url.startsWith('https://');
+    const isSsh = url.startsWith('ssh://');
+    const isScpLike = /^[\w.-]+@[\w.-]+:[\w./-]+(\.git)?$/.test(url);
+    const isGitProtocol = url.startsWith('git://');
+
+    if (isHttp || isSsh || isScpLike || isGitProtocol) {
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      reason: 'Not a recognized Git URL (http(s), ssh, git://, or scp-like ending in .git)',
+    };
+  }
+
+  override validatePath(
+    params: OpenVcs.VcsValidatePathParams,
+    _context: PluginRuntimeContext,
+  ): OpenVcs.VcsValidationResult {
+    const path = asTrimmedString(params.path);
+    if (!path) {
+      return { ok: false, reason: 'Path is required' };
+    }
+
+    // Check if path exists and contains .git directory
+
+    if (!existsSync(path)) {
+      return { ok: false, reason: 'Path does not exist' };
+    }
+
+    const stat = statSync(path);
+    if (!stat.isDirectory()) {
+      return { ok: false, reason: 'Path is not a directory' };
+    }
+
+    const gitDir = join(path, '.git');
+    if (!existsSync(gitDir)) {
+      return { ok: false, reason: 'Not a Git repository (.git directory not found)' };
+    }
+
+    return { ok: true };
   }
 }
